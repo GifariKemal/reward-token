@@ -1,0 +1,18 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc = "0.8.36"        # pin versi solc terbaru (reproducible build)
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+# RPC endpoint dipanggil via: forge script ... --rpc-url bsc_testnet
+[rpc_endpoints]
+bsc_testnet = "${BSC_TESTNET_RPC}"
+sepolia = "${SEPOLIA_RPC}"
+
+# Etherscan V2: satu API key dari etherscan.io berlaku multichain (dibedakan by chain id).
+# Dipakai untuk verify kontrak: forge verify-contract ... --chain bsc_testnet
+[etherscan]
+bsc_testnet = { key = "${ETHERSCAN_API_KEY}", chain = 97 }
+sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 11155111 }
