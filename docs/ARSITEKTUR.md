@@ -236,9 +236,24 @@ Sesi 4:
 - [x] **50 test hijau, coverage 100%** (lines/statements/branches/funcs) untuk 3 kontrak
 - [x] Dry run end-to-end di Anvil: createBounty, submitWork, revert `OracleMasihBertugas`,
       revert `BukanOracle`, `fulfillVerification(true)`, hadiah cair ke worker
-- [ ] Deploy plus verifikasi Factory di BNB Testnet (menunggu tBNB di wallet dev)
+- [x] Deploy plus verifikasi di BNB Testnet (chain 97), ketiga kontrak verified di BscScan
+- [x] Demo oracle manusia on-chain: submitWork lalu fulfillVerification(true), hadiah cair
 - [ ] Tab 2: setOracle ke wallet AI agent (BNB Agent Studio, menunggu folder `agent-oracle/`
       dipublikasikan panitia)
+
+### 8.1 Alamat live di BNB Testnet (chain 97)
+
+| Kontrak | Alamat | Catatan |
+|---|---|---|
+| RewardToken | `0x07238d9a680488E267477139643088aF34abd890` | ERC20 RWD, suplai awal 1000 |
+| BountyFactory | `0xd5E8F3480448D165CbbCBde1036303855B883d09` | owner dan oracle awal = wallet dev |
+| BountyEscrow #0 | `0xe8f7dD0Fce998CB3f58b033D205FaB84c25aA074` | dilahirkan factory, status Selesai |
+
+Transaksi bukti alur: `submitWork`
+`0x150c62133224e047e46c0e3fccaba43d542f759903cf99fa59db85a0386a50a5`, lalu verdict oracle
+`fulfillVerification(true)`
+`0x7deb174867c8bf9d5372105ae1dded9675f272043c853aaf9e51bad34465e558` (gas 50.168) yang
+memindahkan 100 RWD ke worker dan mengosongkan escrow.
 
 ---
 
