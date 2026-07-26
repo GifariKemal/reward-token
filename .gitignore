@@ -12,7 +12,8 @@ out/
 /broadcast/**/dry-run/
 
 # Docs
-docs/
+docs/*
+!docs/ARSITEKTUR.md
 
 # Dotenv file
 .env

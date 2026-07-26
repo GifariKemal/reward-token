@@ -2,56 +2,53 @@
 pragma solidity ^0.8.20;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {BountyEscrow, IBountyFactory} from "./BountyEscrow.sol";
+import {BountyEscrow} from "./BountyEscrow.sol";
 
-/// @title BountyFactory - nyetak satu BountyEscrow per bounty + pegang alamat oracle aktif
-/// @notice Sesi 4: factory pattern (kontrak nyetak kontrak) + sumber tunggal oracle.
-///         Semua escrow baca oracle lewat factory.oracle(), jadi ganti oracle cukup di satu titik.
+/// @title BountyFactory - nyetak satu BountyEscrow per bounty + registry alamatnya
+/// @notice Sesi 4: createBounty atomic (deploy + kunci hadiah dalam 1 tx). Alamat oracle disimpan di sini.
 contract BountyFactory is Ownable {
-    /// @notice Alamat oracle aktif (mis. wallet AI agent). Dibaca semua escrow via factory.oracle().
+    using SafeERC20 for IERC20;
+
+    IERC20 public immutable rewardToken;
     address public oracle;
+    address[] public bounties;
 
-    /// @notice Registry semua escrow yang pernah dibuat factory ini.
-    BountyEscrow[] public bounties;
-
-    event OracleDiubah(address indexed oracleLama, address indexed oracleBaru);
-    event BountyDibuat(
-        address indexed escrow, address indexed funder, uint256 reward, uint256 deadline
+    event OracleSet(address indexed oracle);
+    event BountyCreated(
+        uint256 indexed bountyId, address indexed escrow, address indexed creator, uint256 rewardAmount
     );
 
-    error OracleNol();
+    error AlamatNol();
 
-    constructor(address initialOwner) Ownable(initialOwner) {}
-
-    /// @notice Set/ganti alamat oracle. Hanya owner. Berlaku serentak untuk semua escrow.
-    function setOracle(address _oracle) external onlyOwner {
-        if (_oracle == address(0)) revert OracleNol();
-        emit OracleDiubah(oracle, _oracle);
-        oracle = _oracle;
+    constructor(IERC20 _rewardToken, address initialOwner, address initialOracle) Ownable(initialOwner) {
+        if (address(_rewardToken) == address(0)) revert AlamatNol();
+        if (initialOracle == address(0)) revert AlamatNol();
+        rewardToken = _rewardToken;
+        oracle = initialOracle;
+        emit OracleSet(initialOracle);
     }
 
-    /// @notice Buat bounty baru. Pemanggil jadi funder escrow (bukan factory).
-    function createBounty(
-        IERC20 rewardToken,
-        uint256 reward,
-        string calldata metadataURI,
-        uint256 deadline
-    ) external returns (BountyEscrow escrow) {
-        escrow = new BountyEscrow(
-            IBountyFactory(address(this)), msg.sender, rewardToken, reward, metadataURI, deadline
-        );
-        bounties.push(escrow);
-        emit BountyDibuat(address(escrow), msg.sender, reward, deadline);
+    function setOracle(address newOracle) external onlyOwner {
+        if (newOracle == address(0)) revert AlamatNol();
+        oracle = newOracle;
+        emit OracleSet(newOracle);
     }
 
-    /// @notice Jumlah bounty yang sudah dibuat.
-    function jumlahBounty() external view returns (uint256) {
+    function createBounty(uint256 rewardAmount, string calldata rulesURI, uint256 submissionDeadline)
+        external
+        returns (address)
+    {
+        BountyEscrow escrow = new BountyEscrow(rewardToken, msg.sender, rewardAmount, rulesURI, submissionDeadline);
+        bounties.push(address(escrow));
+        rewardToken.safeTransferFrom(msg.sender, address(escrow), rewardAmount);
+        escrow.confirmFunding();
+        emit BountyCreated(bounties.length - 1, address(escrow), msg.sender, rewardAmount);
+        return address(escrow);
+    }
+
+    function totalBounties() external view returns (uint256) {
         return bounties.length;
-    }
-
-    /// @notice Seluruh alamat escrow dalam registry.
-    function semuaBounty() external view returns (BountyEscrow[] memory) {
-        return bounties;
     }
 }

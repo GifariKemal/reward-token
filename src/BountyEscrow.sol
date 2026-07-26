@@ -5,141 +5,158 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-/// @notice Antarmuka minimal Factory yang dibaca escrow untuk tahu alamat oracle aktif.
 interface IBountyFactory {
     function oracle() external view returns (address);
 }
 
-/// @title BountyEscrow (versi oracle) - escrow satu bounty untuk Papan Sayembara
-/// @notice Sesi 4: approve manual funder diganti verdict oracle (fulfillVerification).
-///         Escrow baca oracle aktif lewat cross-contract call factory.oracle().
-///         Reward dikunci saat fund(), dilepas hanya lewat verdict oracle atau cancel funder.
+/// @title BountyEscrow - satu bounty berhadiah, dana dikunci sampai kerjaan diverifikasi
+/// @notice Sesi 4: di-deploy oleh BountyFactory, verifikasi utama oleh AI oracle via fulfillVerification.
 contract BountyEscrow is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     enum Status {
-        Dibuka, // dibuat, reward belum masuk
-        Didanai, // reward terkunci, menunggu karya
-        Disubmit, // ada karya menunggu verdict oracle
-        Disetujui, // oracle setuju, reward dibayar (final)
-        Dibatalkan // dibatalkan funder, reward dikembalikan (final)
+        MenungguDana,
+        Dibuka,
+        Disubmit,
+        Selesai,
+        Dibatalkan
     }
 
     IBountyFactory public immutable factory;
     IERC20 public immutable rewardToken;
-    address public immutable funder;
-    uint256 public immutable reward;
-    uint256 public immutable deadline;
-    string public metadataURI;
+    address public immutable creator;
+    uint256 public immutable rewardAmount;
+    uint256 public immutable submissionDeadline;
+    string public rulesURI;
 
-    address public worker;
-    string public karyaURI;
     Status public status;
+    address public worker;
+    string public proofURI;
 
-    event BountyDibuat(address indexed funder, uint256 reward, uint256 deadline);
-    event BountyDidanai(uint256 jumlah);
-    event KaryaDisubmit(address indexed worker, string karyaURI);
-    event VerdictDitulis(address indexed oracle, bool disetujui);
-    event BountyDisetujui(address indexed worker, uint256 reward);
-    event KaryaDitolak(address indexed worker);
-    event BountyDibatalkan(uint256 refund);
+    event BountyFunded(uint256 rewardAmount);
+    event WorkSubmitted(address indexed worker, string proofURI);
+    event VerificationFulfilled(address indexed oracle, bool eligible);
+    event WorkRejected(address indexed worker);
+    event RewardReleased(address indexed worker, uint256 rewardAmount);
+    event BountyCancelled(uint256 refundAmount);
 
-    error BukanFunder(address caller);
+    error BukanCreator(address caller);
+    error BukanFactory(address caller);
     error BukanOracle(address caller);
-    error StatusSalah(Status sekarang);
-    error FactoryNol();
-    error FunderNol();
-    error TokenNol();
-    error RewardNol();
-    error DeadlineTakValid();
+    error StatusSalah(Status butuh, Status sekarang);
     error DeadlineLewat();
-    error FunderTakBolehSubmit();
-    error KaryaKosong();
+    error OracleMasihBertugas(uint256 deadline);
+    error DanaKurang(uint256 butuh, uint256 saldo);
+    error RewardNol();
+    error AturanKosong();
+    error DeadlineHarusMasaDepan();
 
-    modifier hanyaFunder() {
-        if (msg.sender != funder) revert BukanFunder(msg.sender);
+    modifier hanyaCreator() {
+        if (msg.sender != creator) revert BukanCreator(msg.sender);
         _;
     }
 
-    /// @dev Oracle aktif dibaca dari factory (sumber tunggal), bukan disimpan lokal.
+    modifier hanyaFactory() {
+        if (msg.sender != address(factory)) revert BukanFactory(msg.sender);
+        _;
+    }
+
     modifier hanyaOracle() {
         if (msg.sender != factory.oracle()) revert BukanOracle(msg.sender);
         _;
     }
 
     constructor(
-        IBountyFactory _factory,
-        address _funder,
         IERC20 _rewardToken,
-        uint256 _reward,
-        string memory _metadataURI,
-        uint256 _deadline
+        address _creator,
+        uint256 _rewardAmount,
+        string memory _rulesURI,
+        uint256 _submissionDeadline
     ) {
-        if (address(_factory) == address(0)) revert FactoryNol();
-        if (_funder == address(0)) revert FunderNol();
-        if (address(_rewardToken) == address(0)) revert TokenNol();
-        if (_reward == 0) revert RewardNol();
-        if (_deadline <= block.timestamp) revert DeadlineTakValid();
-        factory = _factory;
-        funder = _funder;
+        if (_rewardAmount == 0) revert RewardNol();
+        if (bytes(_rulesURI).length == 0) revert AturanKosong();
+        if (_submissionDeadline <= block.timestamp) {
+            revert DeadlineHarusMasaDepan();
+        }
+        factory = IBountyFactory(msg.sender);
         rewardToken = _rewardToken;
-        reward = _reward;
-        metadataURI = _metadataURI;
-        deadline = _deadline;
+        creator = _creator;
+        rewardAmount = _rewardAmount;
+        rulesURI = _rulesURI;
+        submissionDeadline = _submissionDeadline;
+        status = Status.MenungguDana;
+    }
+
+    function confirmFunding() external hanyaFactory {
+        if (status != Status.MenungguDana) {
+            revert StatusSalah(Status.MenungguDana, status);
+        }
+        uint256 saldo = rewardToken.balanceOf(address(this));
+        if (saldo < rewardAmount) revert DanaKurang(rewardAmount, saldo);
         status = Status.Dibuka;
-        emit BountyDibuat(_funder, _reward, _deadline);
+        emit BountyFunded(rewardAmount);
     }
 
-    /// @notice Funder mendanai bounty. Wajib approve reward ke kontrak ini lebih dulu.
-    function fund() external hanyaFunder {
-        if (status != Status.Dibuka) revert StatusSalah(status);
-        status = Status.Didanai;
-        rewardToken.safeTransferFrom(funder, address(this), reward);
-        emit BountyDidanai(reward);
-    }
-
-    /// @notice Worker mengirim karya sebelum deadline. Funder tidak boleh submit sendiri.
-    function submitWork(string calldata _karyaURI) external {
-        if (status != Status.Didanai) revert StatusSalah(status);
-        if (block.timestamp > deadline) revert DeadlineLewat();
-        if (msg.sender == funder) revert FunderTakBolehSubmit();
-        if (bytes(_karyaURI).length == 0) revert KaryaKosong();
+    function submitWork(string calldata _proofURI) external {
+        if (status != Status.Dibuka) revert StatusSalah(Status.Dibuka, status);
+        if (block.timestamp > submissionDeadline) revert DeadlineLewat();
         worker = msg.sender;
-        karyaURI = _karyaURI;
+        proofURI = _proofURI;
         status = Status.Disubmit;
-        emit KaryaDisubmit(msg.sender, _karyaURI);
+        emit WorkSubmitted(msg.sender, _proofURI);
     }
 
-    /// @notice Oracle menulis verdict. disetujui=true bayar worker; false tolak (worker boleh submit ulang).
-    function fulfillVerification(bool disetujui) external hanyaOracle nonReentrant {
-        if (status != Status.Disubmit) revert StatusSalah(status);
-        emit VerdictDitulis(msg.sender, disetujui);
-        if (disetujui) {
-            status = Status.Disetujui;
-            address penerima = worker;
-            rewardToken.safeTransfer(penerima, reward);
-            emit BountyDisetujui(penerima, reward);
+    function fulfillVerification(bool eligible) external hanyaOracle nonReentrant {
+        if (status != Status.Disubmit) {
+            revert StatusSalah(Status.Disubmit, status);
+        }
+        emit VerificationFulfilled(msg.sender, eligible);
+        if (eligible) {
+            _releaseReward();
         } else {
-            address ditolak = worker;
-            worker = address(0);
-            karyaURI = "";
-            status = Status.Didanai;
-            emit KaryaDitolak(ditolak);
+            _rejectSubmission();
         }
     }
 
-    /// @notice Funder membatalkan bounty selama belum disetujui. Reward dikembalikan bila sudah didanai.
-    function cancel() external hanyaFunder nonReentrant {
-        Status s = status;
-        if (s != Status.Dibuka && s != Status.Didanai && s != Status.Disubmit) {
-            revert StatusSalah(s);
+    function approveWork() external hanyaCreator nonReentrant {
+        if (status != Status.Disubmit) {
+            revert StatusSalah(Status.Disubmit, status);
         }
+        if (block.timestamp <= submissionDeadline) {
+            revert OracleMasihBertugas(submissionDeadline);
+        }
+        _releaseReward();
+    }
+
+    function rejectWork() external hanyaCreator {
+        if (status != Status.Disubmit) {
+            revert StatusSalah(Status.Disubmit, status);
+        }
+        if (block.timestamp <= submissionDeadline) {
+            revert OracleMasihBertugas(submissionDeadline);
+        }
+        _rejectSubmission();
+    }
+
+    function cancel() external hanyaCreator nonReentrant {
+        if (status != Status.Dibuka) revert StatusSalah(Status.Dibuka, status);
         status = Status.Dibatalkan;
-        uint256 refund;
-        if (s != Status.Dibuka) {
-            refund = reward;
-            rewardToken.safeTransfer(funder, refund);
-        }
-        emit BountyDibatalkan(refund);
+        rewardToken.safeTransfer(creator, rewardAmount);
+        emit BountyCancelled(rewardAmount);
+    }
+
+    function _releaseReward() internal {
+        status = Status.Selesai;
+        address recipient = worker;
+        rewardToken.safeTransfer(recipient, rewardAmount);
+        emit RewardReleased(recipient, rewardAmount);
+    }
+
+    function _rejectSubmission() internal {
+        address rejectedWorker = worker;
+        worker = address(0);
+        proofURI = "";
+        status = Status.Dibuka;
+        emit WorkRejected(rejectedWorker);
     }
 }
