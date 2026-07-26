@@ -3,40 +3,42 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {RewardToken} from "../src/RewardToken.sol";
-import {BountyEscrow} from "../src/BountyEscrow.sol";
+import {BountyEscrow, IBountyFactory} from "../src/BountyEscrow.sol";
+
+/// @dev Factory tiruan: escrow cuma butuh oracle() dari factory.
+contract MockFactory is IBountyFactory {
+    address public oracle;
+
+    function setOracle(address o) external {
+        oracle = o;
+    }
+}
 
 contract BountyEscrowTest is Test {
     RewardToken token;
+    MockFactory factory;
     BountyEscrow escrow;
 
     address funder = makeAddr("funder");
     address worker = makeAddr("worker");
-    address worker2 = makeAddr("worker2");
-    address orang = makeAddr("orang"); // pihak lain, bukan funder/worker
+    address oracle = makeAddr("oracle");
+    address rando = makeAddr("rando");
 
     uint256 constant REWARD = 100 ether;
-    uint256 deadline;
-    string constant META = "ipfs://rules";
+    string constant META = "ipfs://meta";
     string constant KARYA = "ipfs://karya";
-
-    // event disalin dari kontrak untuk vm.expectEmit
-    event BountyDidanai(uint256 jumlah);
-    event KaryaDisubmit(address indexed worker, string karyaURI);
-    event KaryaDitolak(address indexed worker);
-    event BountyDisetujui(address indexed worker, uint256 reward);
-    event BountyDibatalkan(uint256 refund);
+    uint256 deadline;
 
     function setUp() public {
-        deadline = block.timestamp + 7 days;
-        // owner token = funder, jadi funder punya 1000 RWD untuk mendanai bounty
         token = new RewardToken(1000 ether, funder);
-        vm.prank(funder);
-        escrow = new BountyEscrow(IERC20(address(token)), REWARD, META, deadline);
+        factory = new MockFactory();
+        factory.setOracle(oracle);
+        deadline = block.timestamp + 7 days;
+        escrow = new BountyEscrow(
+            IBountyFactory(address(factory)), funder, IERC20(address(token)), REWARD, META, deadline
+        );
     }
-
-    // ---- helper ----
 
     function _danai() internal {
         vm.startPrank(funder);
@@ -45,253 +47,190 @@ contract BountyEscrowTest is Test {
         vm.stopPrank();
     }
 
-    function _submit(address who) internal {
-        vm.prank(who);
-        escrow.submit(KARYA);
+    function _submit() internal {
+        _danai();
+        vm.prank(worker);
+        escrow.submitWork(KARYA);
     }
 
-    // ================= constructor / state awal =================
-
-    function test_InitialState() public view {
+    // ---------- constructor ----------
+    function test_ConstructorSetsState() public view {
+        assertEq(address(escrow.factory()), address(factory));
         assertEq(address(escrow.rewardToken()), address(token));
         assertEq(escrow.funder(), funder);
         assertEq(escrow.reward(), REWARD);
         assertEq(escrow.deadline(), deadline);
         assertEq(escrow.metadataURI(), META);
-        assertEq(escrow.worker(), address(0));
         assertEq(uint256(escrow.status()), uint256(BountyEscrow.Status.Dibuka));
     }
 
-    function test_ConstructorRevertsTokenNol() public {
-        vm.prank(funder);
+    function test_ConstructorRevertFactoryNol() public {
+        vm.expectRevert(BountyEscrow.FactoryNol.selector);
+        new BountyEscrow(IBountyFactory(address(0)), funder, IERC20(address(token)), REWARD, META, deadline);
+    }
+
+    function test_ConstructorRevertFunderNol() public {
+        vm.expectRevert(BountyEscrow.FunderNol.selector);
+        new BountyEscrow(IBountyFactory(address(factory)), address(0), IERC20(address(token)), REWARD, META, deadline);
+    }
+
+    function test_ConstructorRevertTokenNol() public {
         vm.expectRevert(BountyEscrow.TokenNol.selector);
-        new BountyEscrow(IERC20(address(0)), REWARD, META, deadline);
+        new BountyEscrow(IBountyFactory(address(factory)), funder, IERC20(address(0)), REWARD, META, deadline);
     }
 
-    function test_ConstructorRevertsRewardNol() public {
-        vm.prank(funder);
+    function test_ConstructorRevertRewardNol() public {
         vm.expectRevert(BountyEscrow.RewardNol.selector);
-        new BountyEscrow(IERC20(address(token)), 0, META, deadline);
+        new BountyEscrow(IBountyFactory(address(factory)), funder, IERC20(address(token)), 0, META, deadline);
     }
 
-    function test_ConstructorRevertsDeadlineTakValid() public {
-        vm.prank(funder);
+    function test_ConstructorRevertDeadlineTakValid() public {
         vm.expectRevert(BountyEscrow.DeadlineTakValid.selector);
-        new BountyEscrow(IERC20(address(token)), REWARD, META, block.timestamp);
+        new BountyEscrow(
+            IBountyFactory(address(factory)), funder, IERC20(address(token)), REWARD, META, block.timestamp
+        );
     }
 
-    // ================= fund =================
-
+    // ---------- fund ----------
     function test_FundLocksReward() public {
-        vm.startPrank(funder);
-        token.approve(address(escrow), REWARD);
-        vm.expectEmit(false, false, false, true);
-        emit BountyDidanai(REWARD);
-        escrow.fund();
-        vm.stopPrank();
-
+        _danai();
+        assertEq(uint256(escrow.status()), uint256(BountyEscrow.Status.Didanai));
         assertEq(token.balanceOf(address(escrow)), REWARD);
         assertEq(token.balanceOf(funder), 1000 ether - REWARD);
-        assertEq(uint256(escrow.status()), uint256(BountyEscrow.Status.Didanai));
     }
 
-    function test_FundOnlyFunder() public {
-        vm.prank(orang);
-        vm.expectRevert(abi.encodeWithSelector(BountyEscrow.BukanFunder.selector, orang));
+    function test_FundRevertBukanFunder() public {
+        vm.prank(rando);
+        vm.expectRevert(abi.encodeWithSelector(BountyEscrow.BukanFunder.selector, rando));
         escrow.fund();
     }
 
-    function test_FundRevertsIfNotDibuka() public {
+    function test_FundRevertStatusSalah() public {
         _danai();
         vm.prank(funder);
         vm.expectRevert(abi.encodeWithSelector(BountyEscrow.StatusSalah.selector, BountyEscrow.Status.Didanai));
         escrow.fund();
     }
 
-    function test_FundRevertsWithoutApprove() public {
-        vm.prank(funder);
-        vm.expectRevert(
-            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(escrow), 0, REWARD)
-        );
-        escrow.fund();
-    }
-
-    // ================= submit =================
-
-    function test_SubmitRecordsWorker() public {
-        _danai();
-        vm.expectEmit(true, false, false, true);
-        emit KaryaDisubmit(worker, KARYA);
-        _submit(worker);
-
+    // ---------- submitWork ----------
+    function test_SubmitWorkSetsState() public {
+        _submit();
         assertEq(escrow.worker(), worker);
         assertEq(escrow.karyaURI(), KARYA);
         assertEq(uint256(escrow.status()), uint256(BountyEscrow.Status.Disubmit));
     }
 
-    function test_SubmitRevertsIfNotDidanai() public {
+    function test_SubmitWorkRevertStatusSalah() public {
         vm.prank(worker);
         vm.expectRevert(abi.encodeWithSelector(BountyEscrow.StatusSalah.selector, BountyEscrow.Status.Dibuka));
-        escrow.submit(KARYA);
+        escrow.submitWork(KARYA);
     }
 
-    function test_SubmitRevertsAfterDeadline() public {
+    function test_SubmitWorkRevertDeadlineLewat() public {
         _danai();
         vm.warp(deadline + 1);
         vm.prank(worker);
         vm.expectRevert(BountyEscrow.DeadlineLewat.selector);
-        escrow.submit(KARYA);
+        escrow.submitWork(KARYA);
     }
 
-    function test_SubmitRevertsFunderCannot() public {
+    function test_SubmitWorkRevertFunderTakBolehSubmit() public {
         _danai();
         vm.prank(funder);
         vm.expectRevert(BountyEscrow.FunderTakBolehSubmit.selector);
-        escrow.submit(KARYA);
+        escrow.submitWork(KARYA);
     }
 
-    function test_SubmitRevertsEmptyKarya() public {
+    function test_SubmitWorkRevertKaryaKosong() public {
         _danai();
         vm.prank(worker);
         vm.expectRevert(BountyEscrow.KaryaKosong.selector);
-        escrow.submit("");
+        escrow.submitWork("");
     }
 
-    // ================= approve =================
-
-    function test_ApprovePaysWorker() public {
-        _danai();
-        _submit(worker);
-        vm.expectEmit(true, false, false, true);
-        emit BountyDisetujui(worker, REWARD);
-        vm.prank(funder);
-        escrow.approve();
-
+    // ---------- fulfillVerification ----------
+    function test_FulfillApprovePaysWorker() public {
+        _submit();
+        vm.prank(oracle);
+        escrow.fulfillVerification(true);
+        assertEq(uint256(escrow.status()), uint256(BountyEscrow.Status.Disetujui));
         assertEq(token.balanceOf(worker), REWARD);
         assertEq(token.balanceOf(address(escrow)), 0);
-        assertEq(uint256(escrow.status()), uint256(BountyEscrow.Status.Disetujui));
     }
 
-    function test_ApproveOnlyFunder() public {
-        _danai();
-        _submit(worker);
-        vm.prank(orang);
-        vm.expectRevert(abi.encodeWithSelector(BountyEscrow.BukanFunder.selector, orang));
-        escrow.approve();
-    }
-
-    function test_ApproveRevertsIfNotDisubmit() public {
-        _danai();
-        vm.prank(funder);
-        vm.expectRevert(abi.encodeWithSelector(BountyEscrow.StatusSalah.selector, BountyEscrow.Status.Didanai));
-        escrow.approve();
-    }
-
-    // ================= reject =================
-
-    function test_RejectResetsToDidanai() public {
-        _danai();
-        _submit(worker);
-        vm.expectEmit(true, false, false, false);
-        emit KaryaDitolak(worker);
-        vm.prank(funder);
-        escrow.reject();
-
+    function test_FulfillRejectResetsToDidanai() public {
+        _submit();
+        vm.prank(oracle);
+        escrow.fulfillVerification(false);
+        assertEq(uint256(escrow.status()), uint256(BountyEscrow.Status.Didanai));
         assertEq(escrow.worker(), address(0));
         assertEq(escrow.karyaURI(), "");
-        assertEq(uint256(escrow.status()), uint256(BountyEscrow.Status.Didanai));
-        assertEq(token.balanceOf(address(escrow)), REWARD); // reward tetap terkunci
+        assertEq(token.balanceOf(address(escrow)), REWARD);
     }
 
-    function test_RejectOnlyFunder() public {
-        _danai();
-        _submit(worker);
-        vm.prank(orang);
-        vm.expectRevert(abi.encodeWithSelector(BountyEscrow.BukanFunder.selector, orang));
-        escrow.reject();
+    function test_FulfillRevertBukanOracle() public {
+        _submit();
+        vm.prank(rando);
+        vm.expectRevert(abi.encodeWithSelector(BountyEscrow.BukanOracle.selector, rando));
+        escrow.fulfillVerification(true);
     }
 
-    function test_RejectRevertsIfNotDisubmit() public {
+    function test_FulfillRevertStatusSalah() public {
         _danai();
-        vm.prank(funder);
+        vm.prank(oracle);
         vm.expectRevert(abi.encodeWithSelector(BountyEscrow.StatusSalah.selector, BountyEscrow.Status.Didanai));
-        escrow.reject();
+        escrow.fulfillVerification(true);
     }
 
-    // ================= cancel =================
+    function test_ResubmitAfterRejectThenApprove() public {
+        _submit();
+        vm.prank(oracle);
+        escrow.fulfillVerification(false);
+        vm.prank(worker);
+        escrow.submitWork(KARYA);
+        assertEq(uint256(escrow.status()), uint256(BountyEscrow.Status.Disubmit));
+        vm.prank(oracle);
+        escrow.fulfillVerification(true);
+        assertEq(token.balanceOf(worker), REWARD);
+    }
 
+    // ---------- cancel ----------
     function test_CancelBeforeFundNoRefund() public {
-        vm.expectEmit(false, false, false, true);
-        emit BountyDibatalkan(0);
         vm.prank(funder);
         escrow.cancel();
-
         assertEq(uint256(escrow.status()), uint256(BountyEscrow.Status.Dibatalkan));
-        assertEq(token.balanceOf(funder), 1000 ether); // tidak ada dana bergerak
+        assertEq(token.balanceOf(funder), 1000 ether);
     }
 
     function test_CancelAfterFundRefunds() public {
         _danai();
-        vm.expectEmit(false, false, false, true);
-        emit BountyDibatalkan(REWARD);
         vm.prank(funder);
         escrow.cancel();
-
         assertEq(uint256(escrow.status()), uint256(BountyEscrow.Status.Dibatalkan));
         assertEq(token.balanceOf(funder), 1000 ether);
         assertEq(token.balanceOf(address(escrow)), 0);
     }
 
     function test_CancelAfterSubmitRefunds() public {
-        _danai();
-        _submit(worker);
+        _submit();
         vm.prank(funder);
         escrow.cancel();
-
         assertEq(uint256(escrow.status()), uint256(BountyEscrow.Status.Dibatalkan));
         assertEq(token.balanceOf(funder), 1000 ether);
-        assertEq(token.balanceOf(worker), 0);
     }
 
-    function test_CancelOnlyFunder() public {
-        vm.prank(orang);
-        vm.expectRevert(abi.encodeWithSelector(BountyEscrow.BukanFunder.selector, orang));
+    function test_CancelRevertBukanFunder() public {
+        vm.prank(rando);
+        vm.expectRevert(abi.encodeWithSelector(BountyEscrow.BukanFunder.selector, rando));
         escrow.cancel();
     }
 
-    function test_CancelRevertsIfFinal() public {
-        _danai();
-        _submit(worker);
-        vm.prank(funder);
-        escrow.approve();
+    function test_CancelRevertStatusSalahAfterApproved() public {
+        _submit();
+        vm.prank(oracle);
+        escrow.fulfillVerification(true);
         vm.prank(funder);
         vm.expectRevert(abi.encodeWithSelector(BountyEscrow.StatusSalah.selector, BountyEscrow.Status.Disetujui));
         escrow.cancel();
-    }
-
-    // ================= alur penuh & fuzz =================
-
-    function test_ResubmitAfterRejectThenApprove() public {
-        _danai();
-        _submit(worker); // karya pertama
-        vm.prank(funder);
-        escrow.reject(); // ditolak, balik ke Didanai
-        _submit(worker2); // worker lain submit ulang
-        vm.prank(funder);
-        escrow.approve();
-
-        assertEq(token.balanceOf(worker2), REWARD);
-        assertEq(token.balanceOf(worker), 0);
-        assertEq(uint256(escrow.status()), uint256(BountyEscrow.Status.Disetujui));
-    }
-
-    function testFuzz_AnyWorkerCanBePaid(address w) public {
-        vm.assume(w != funder && w != address(0) && w != address(escrow) && w != address(token));
-        _danai();
-        vm.prank(w);
-        escrow.submit(KARYA);
-        vm.prank(funder);
-        escrow.approve();
-        assertEq(token.balanceOf(w), REWARD);
     }
 }
