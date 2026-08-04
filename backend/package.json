@@ -14,6 +14,10 @@
     "viem": "^2.55.10"
   },
   "scripts": {
-    "dev": "bun run --hot src/index.ts"
+    "dev": "bun run --hot src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "seed:export": "bun run seed.ts export",
+    "seed:import": "bun run seed.ts import"
   }
 }

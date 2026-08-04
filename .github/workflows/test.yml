@@ -33,3 +33,53 @@ jobs:
 
       - name: Run Forge tests
         run: forge test -vvv
+
+  # Job kontrak di atas tidak menyentuh backend/ maupun ponder/ sama sekali, jadi
+  # keduanya bisa rusak total sementara CI tetap hijau. Job ini menutup lubang itu.
+  indexer:
+    name: Indexer (backend + ponder)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install backend deps
+        run: bun install --frozen-lockfile
+        working-directory: backend
+
+      - name: Typecheck backend
+        run: bun run typecheck
+        working-directory: backend
+
+      - name: Test backend
+        run: bun test
+        working-directory: backend
+
+      - name: Verify seed dapat dipulihkan ke basis data kosong
+        # Seed adalah satu-satunya salinan riwayat awal setelah RPC publik
+        # memangkas block deploy, jadi jalur pemulihannya wajib diuji, bukan
+        # cuma diasumsikan.
+        run: |
+          DB_PATH=/tmp/uji-seed.db bun run seed.ts import
+          DB_PATH=/tmp/uji-seed.db bun run seed.ts import   # idempotent
+        working-directory: backend
+
+      - name: Install ponder deps
+        run: bun install --frozen-lockfile
+        working-directory: ponder
+
+      - name: Ponder codegen
+        # Wajib sebelum tsc: modul virtual ponder:registry dan ponder:schema
+        # baru ada setelah codegen.
+        run: bunx ponder codegen
+        working-directory: ponder
+
+      - name: Typecheck ponder
+        run: bunx tsc --noEmit
+        working-directory: ponder

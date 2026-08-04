@@ -32,6 +32,7 @@ export const handleBountyCreated = (log: Awaited<ReturnType<typeof getFactoryLog
     rewardAmount: log.args.rewardAmount.toString(),
     txHash: log.transactionHash,
     blockNumber: Number(log.blockNumber),
+    blockHash: log.blockHash, // dipakai deteksi reorg (indexer/reorg.ts)
     ts: now(),
   });
   console.log("📦 bounty created  #%s by %s", log.args.bountyId, log.args.creator);
@@ -47,6 +48,7 @@ export const handleEscrowLog = (log: Awaited<ReturnType<typeof getEscrowLogs>>[n
         proofUri: log.args.proofURI,
         txHash: log.transactionHash,
         blockNumber: Number(log.blockNumber),
+        blockHash: log.blockHash, // dipakai deteksi reorg (indexer/reorg.ts)
         ts: now(),
       });
       console.log("📝 work submitted  %s → %s", log.args.worker, escrow);
