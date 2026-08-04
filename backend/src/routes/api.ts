@@ -46,4 +46,3 @@ app.get("/balance/:address", async (c) => {
 
 // GET /health → cek server hidup
 app.get("/health", (c) => c.json({ ok: true, time: new Date().toISOString() }));
-
