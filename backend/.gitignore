@@ -1,0 +1,4 @@
+node_modules/
+papan-sayembara.db
+papan-sayembara.db-*
+.env

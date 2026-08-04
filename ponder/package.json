@@ -1,0 +1,13 @@
+{
+  "name": "ponder-bounty",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "ponder dev",
+    "start": "ponder start",
+    "codegen": "ponder codegen"
+  },
+  "dependencies": {
+    "ponder": "^0.17.4"
+  }
+}
