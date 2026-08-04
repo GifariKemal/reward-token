@@ -94,6 +94,16 @@ membaca chain yang sama dengan cara berbeda.
 > log, tanpa menarik header block. Ponder lebih ringkas ditulis dan langsung
 > memberi GraphQL. Pilih sesuai kebutuhan, bukan sesuai kebaruan.
 
+> [!NOTE]
+> Kode di sini mengikuti materi workshop kata per kata, kecuali tiga hal yang
+> disengaja: dua alamat kontrak plus block deploy di `backend/src/config.ts` dan
+> `ponder/ponder.config.ts` (deployment sendiri, bukan deployment mentor), serta
+> penjaga pendaftaran watcher di `backend/src/index.ts`. Tanpa penjaga itu,
+> `bun run --hot` mendaftarkan watcher baru setiap reload tanpa menutup yang lama,
+> sehingga satu event memicu handler sebanyak jumlah reload. Basis data tetap
+> bersih karena insert-nya idempotent, tapi begitu handler diberi efek samping
+> (memanggil verifier AI, mengirim notifikasi) duplikasi itu jadi masalah.
+
 Keduanya melacak empat event: `BountyCreated`, `WorkSubmitted`, `RewardReleased`,
 dan `WorkRejected`.
 
