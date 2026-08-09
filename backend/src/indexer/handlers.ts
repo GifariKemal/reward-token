@@ -27,7 +27,10 @@ export const getEscrowLogs = (address: Address[], fromBlock: bigint, toBlock: bi
 export const handleBountyCreated = (log: Awaited<ReturnType<typeof getFactoryLogs>>[number]) => {
   upsertBounty.run({
     bountyId: Number(log.args.bountyId),
-    escrow: log.args.escrow,
+    // lowercase supaya sama dengan submissions.escrow dan verdicts.escrow, yang diisi
+    // dari log.address. Tanpa ini alamat yang sama tersimpan dalam dua kapitalisasi
+    // berbeda dan penyambungan antar tabel mengembalikan nol baris.
+    escrow: log.args.escrow.toLowerCase(),
     creator: log.args.creator,
     rewardAmount: log.args.rewardAmount.toString(),
     txHash: log.transactionHash,

@@ -6,9 +6,22 @@ import type { Address } from "viem";
 
 // strict: bind {param} tanpa prefix "@" + error bila ada parameter terlewat
 // DB_PATH bisa ditimpa lewat env supaya test tidak menyentuh basis data sungguhan
-export const db = new Database(process.env.DB_PATH ?? "papan-sayembara.db", { create: true, strict: true });
+//
+// Handle disimpan di globalThis dengan alasan yang sama seperti penjaga watcher di
+// src/index.ts: `bun run --hot` mengevaluasi ulang SELURUH graf impor, bukan hanya
+// berkas yang disunting, jadi tanpa ini setiap simpan berkas membuka satu handle
+// SQLite baru tanpa menutup yang lama. Akibatnya terlihat nyata: WAL tidak pernah
+// bisa checkpoint karena selalu ada pembaca sisa yang menahannya (terukur 994 KB WAL
+// untuk 36 KB data), dan prepared statement lama menunjuk handle yang sudah mati.
+const g = globalThis as { __db?: Database };
+export const db = (g.__db ??= new Database(process.env.DB_PATH ?? "papan-sayembara.db", {
+  create: true,
+  strict: true,
+}));
 
-db.exec("PRAGMA journal_mode = WAL;");
+// WAL = baca & tulis barengan; busy_timeout = sabar antre kalau proses lain lagi nulis
+// (dua proses memakai file ini: `bun dev` untuk indexer/API dan `bun oracle` untuk juri)
+db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS bounties (
@@ -42,6 +55,18 @@ db.exec(`
     id          INTEGER PRIMARY KEY CHECK (id = 1),
     last_block  INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS verdicts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    escrow     TEXT NOT NULL,
+    worker     TEXT NOT NULL,
+    eligible   INTEGER NOT NULL, -- 0/1; chain cuma simpan hasilnya, alasan AI hidup di sini
+    alasan     TEXT NOT NULL,
+    tx_hash    TEXT,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_verdicts_escrow ON verdicts(escrow);
 `);
 
 // Migrasi untuk basis data yang dibuat sebelum kolom block_hash ada.
@@ -50,6 +75,16 @@ for (const t of ["bounties", "submissions"]) {
   const kolom = db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[];
   if (!kolom.some((k) => k.name === "block_hash")) db.exec(`ALTER TABLE ${t} ADD COLUMN block_hash TEXT`);
 }
+
+// Samakan kapitalisasi alamat escrow. `bounties.escrow` dulu diisi dari
+// `log.args.escrow` yang sudah dinormalkan viem ke checksum, sedangkan
+// `submissions.escrow` dan `verdicts.escrow` diisi dari `log.address` yang huruf
+// kecil apa adanya. Keduanya bertipe Address di mata TypeScript, jadi tidak ada yang
+// mengeluh, tapi setiap konsumen yang menyambungkan dua tabel itu dengan
+// perbandingan string mentah akan mendapat NOL baris. Ini ranjau untuk frontend
+// Sesi 7, jadi diberesi di sumbernya (lihat indexer/handlers.ts) sekaligus di baris
+// yang sudah tersimpan.
+db.exec("UPDATE bounties SET escrow = lower(escrow) WHERE escrow <> lower(escrow)");
 
 // Bentuk baris tabel (dipakai di services/routes)
 export type BountyRow = {
@@ -101,6 +136,57 @@ export const getBoard = () => ({
   submissions: db.prepare("SELECT * FROM submissions ORDER BY block_number DESC").all() as SubmissionRow[],
 });
 
+// Submission yang masih menunggu penilaian (dikonsumsi juri AI via GET /pending)
+// tx_hash ikut diambil (di luar materi) karena juri memakainya sebagai kunci
+// idempoten. Kunci berbasis proof_uri tidak cukup: setelah ditolak, escrow kembali ke
+// status Dibuka, jadi worker boleh memperbaiki isi berkas lalu submit lagi dengan URL
+// yang sama, dan submission baru itu tidak akan pernah dinilai. tx_hash sudah UNIQUE
+// di skema, jadi ia unik per submission.
+export type PendingRow = Pick<
+  SubmissionRow,
+  "escrow" | "worker" | "proof_uri" | "tx_hash" | "block_number" | "created_at"
+>;
+
+export const getPending = () =>
+  db.prepare(`
+    SELECT escrow, worker, proof_uri, tx_hash, block_number, created_at FROM submissions
+    WHERE status = 'submitted' ORDER BY block_number ASC, id ASC
+  `).all() as PendingRow[];
+
+// Peringkat worker: jumlah menang + total reward
+// (BigInt di JS - nilai wei kelewat besar untuk SUM() SQLite yang cuma 64-bit)
+export const getLeaderboard = () => {
+  const rows = db.prepare("SELECT worker, reward_amount FROM submissions WHERE status = 'rewarded'")
+    .all() as { worker: string; reward_amount: string | null }[];
+  const skor = new Map<string, { wins: number; total: bigint }>();
+  for (const r of rows) {
+    const s = skor.get(r.worker) ?? { wins: 0, total: 0n };
+    // Nilai yang tidak bisa jadi BigInt tidak boleh menjatuhkan seluruh peringkat.
+    // Tanpa penjaga ini satu baris rusak membuat GET /leaderboard 500 untuk semua.
+    let hadiah = 0n;
+    try {
+      hadiah = BigInt(r.reward_amount ?? 0);
+    } catch {
+      console.error(`reward_amount tidak bisa dibaca untuk ${r.worker}: ${r.reward_amount}`);
+    }
+    skor.set(r.worker, { wins: s.wins + 1, total: s.total + hadiah });
+  }
+  return [...skor]
+    .map(([worker, s]) => ({ worker, wins: s.wins, total_reward: s.total.toString() }))
+    // seri jumlah menang dipecah oleh total hadiah, supaya urutannya tidak bergantung
+    // pada urutan penyisipan Map
+    .sort((a, b) => b.wins - a.wins || (BigInt(b.total_reward) > BigInt(a.total_reward) ? 1 : -1));
+};
+
+// Verdict AI: hasil + alasan (chain cuma tahu true/false, alasannya disimpan di sini)
+export const insertVerdict = db.prepare(`
+  INSERT INTO verdicts (escrow, worker, eligible, alasan, tx_hash, created_at)
+  VALUES (@escrow, @worker, @eligible, @alasan, @txHash, @ts)
+`);
+
+export const getVerdicts = (escrow: string) =>
+  db.prepare("SELECT * FROM verdicts WHERE escrow = ? ORDER BY id DESC").all(escrow);
+
 // --- dukungan deteksi reorg (lihat indexer/reorg.ts) ---
 
 // Block terindeks yang masih dalam jendela rawan reorg, beserta hash yang tercatat.
@@ -121,6 +207,8 @@ export const deleteRowsAtBlock = (block: number) => {
   db.prepare("DELETE FROM submissions WHERE block_number = ?").run(block);
 };
 
-// Isi block_hash baris lama sekali jalan, selagi RPC masih menyajikan block itu
-export const setBlockHash = (table: "bounties" | "submissions", block: number, hash: string) =>
-  db.prepare(`UPDATE ${table} SET block_hash = ? WHERE block_number = ? AND block_hash IS NULL`).run(hash, block);
+// Catatan: `setBlockHash` (pengisian block_hash baris lama, sekali jalan pada 4 Agustus
+// 2026) dihapus setelah tugasnya selesai. Ia satu-satunya query yang menyusun nama
+// tabel lewat template string, dan jaminan union `"bounties" | "submissions"` hanya
+// berlaku saat kompilasi, jadi membiarkannya menganggur berarti menyimpan calon
+// lubang injeksi tanpa pemakai.

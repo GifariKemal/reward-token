@@ -58,7 +58,11 @@ jobs:
         working-directory: backend
 
       - name: Test backend
-        run: bun test
+        # `bun run test`, bukan `bun test` mentah: tiap file uji wajib jalan di
+        # prosesnya sendiri karena src/lib/db.ts membuka basis data sekali di
+        # tingkat modul, jadi dua file uji dalam satu proses akan berebut instance
+        # yang sama. Lihat catatan di reorg.test.ts.
+        run: bun run test
         working-directory: backend
 
       - name: Verify seed dapat dipulihkan ke basis data kosong
