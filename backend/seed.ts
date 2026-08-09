@@ -6,6 +6,12 @@
 // riwayat awal tidak bisa diindeks ulang oleh siapa pun. Seed inilah satu-satunya
 // jalan bagi klon baru untuk punya riwayat itu.
 //
+// Tabel `verdicts` ikut dicadangkan dengan alasan yang bahkan lebih kuat: chain hanya
+// menyimpan true atau false, sedangkan ALASAN putusan AI tidak pernah ada di chain.
+// Kalau berkas basis data ini hilang, alasannya tidak bisa dipulihkan dari mana pun,
+// termasuk dengan mengindeks ulang. Kolom `id` ikut diekspor supaya impor ulang
+// idempotent lewat kunci primernya.
+//
 // Seed menyertakan sync_checkpoint, jadi klon baru langsung melanjutkan ke depan
 // dan tidak mencoba memindai riwayat yang sudah tidak tersedia.
 //
@@ -24,12 +30,20 @@ const ekspor = async () => {
     "",
   ];
   const tabel = {
-    bounties: ["bounty_id", "escrow", "creator", "reward_amount", "tx_hash", "block_number", "block_hash", "created_at"],
-    submissions: ["escrow", "worker", "proof_uri", "status", "reward_amount", "tx_hash", "block_number", "block_hash", "created_at"],
+    bounties: {
+      kolom: ["bounty_id", "escrow", "creator", "reward_amount", "tx_hash", "block_number", "block_hash", "created_at"],
+      urut: "block_number",
+    },
+    submissions: {
+      kolom: ["escrow", "worker", "proof_uri", "status", "reward_amount", "tx_hash", "block_number", "block_hash", "created_at"],
+      urut: "block_number",
+    },
+    // id ikut diekspor supaya INSERT OR IGNORE dedupe lewat kunci primer
+    verdicts: { kolom: ["id", "escrow", "worker", "eligible", "alasan", "tx_hash", "created_at"], urut: "id" },
   } as const;
 
-  for (const [nama, kolom] of Object.entries(tabel)) {
-    const rows = db.prepare(`SELECT ${kolom.join(", ")} FROM ${nama} ORDER BY block_number`).all() as Record<string, unknown>[];
+  for (const [nama, { kolom, urut }] of Object.entries(tabel)) {
+    const rows = db.prepare(`SELECT ${kolom.join(", ")} FROM ${nama} ORDER BY ${urut}`).all() as Record<string, unknown>[];
     baris.push(`-- ${nama}: ${rows.length} baris`);
     for (const r of rows) {
       baris.push(`INSERT OR IGNORE INTO ${nama} (${kolom.join(", ")}) VALUES (${kolom.map((k) => q(r[k])).join(", ")});`);
@@ -53,7 +67,7 @@ const impor = async () => {
   if (!(await f.exists())) throw new Error(`${FILE} tidak ada, jalankan seed:export dulu`);
   db.exec(await f.text());
   const n = (t: string) => (db.prepare(`SELECT COUNT(*) c FROM ${t}`).get() as { c: number }).c;
-  console.log(`terimpor | bounties: ${n("bounties")} | submissions: ${n("submissions")}`);
+  console.log(`terimpor | bounties: ${n("bounties")} | submissions: ${n("submissions")} | verdicts: ${n("verdicts")}`);
 };
 
 const mode = process.argv[2];

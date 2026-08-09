@@ -10,8 +10,19 @@ import { getEscrowLogs, handleBountyCreated, handleEscrowLog } from "./handlers"
 export const watch = () => {
   const onError = (err: Error) => console.error("⚠️ watch error:", err.message);
 
-  const watchEscrow = (address: Address) =>
+  // Penjaga pendaftaran ganda: `watchEvent` bisa dipanggil dua kali untuk escrow yang
+  // sama kalau factory mengirim ulang log BountyCreated (mis. saat fallback berpindah
+  // provider dan tinggi block mundur). viem menambahkan sepasang listener lagi ke
+  // poller yang sama, jadi satu event memicu handler N kali dan jumlah listener tumbuh
+  // tanpa batas. Basis datanya aman karena insert idempoten, tapi lognya membingungkan
+  // dan poll RPC-nya berlipat.
+  const dipantau = new Set<string>();
+  const watchEscrow = (address: Address) => {
+    const kunci = address.toLowerCase();
+    if (dipantau.has(kunci)) return;
+    dipantau.add(kunci);
     client.watchEvent({ address, events: escrowEvents, strict: true, onLogs: (logs) => logs.forEach(handleEscrowLog), onError });
+  };
 
   // Susulan sekali jalan untuk satu escrow, dari block kelahirannya sampai sekarang.
   // Insert idempoten, jadi tumpang tindih dengan watcher aman.

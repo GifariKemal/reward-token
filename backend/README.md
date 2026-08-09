@@ -71,7 +71,7 @@ route tak dikenal balas `404`.
 | `src/routes/api.ts` | Definisi endpoint REST plus validasi masukan |
 | `src/index.ts` | Entry point pertama: reorg, backfill, watch, lalu sajikan API |
 | `src/oracle.ts` | Entry point kedua: loop juri AI |
-| `seed.ts`, `seed.sql` | Ekspor dan impor snapshot riwayat |
+| `seed.ts`, `seed.sql` | Ekspor dan impor snapshot riwayat plus alasan putusan AI, yang tidak ada di chain |
 | `reorg.test.ts` | 4 test logika reorg, hash kanonik diinjeksi |
 | `sesi6.test.ts` | 27 test jalur Sesi 6, LLM diganti server tiruan |
 | `periksa-sesi6.ts` | Verifikasi independen ke chain dengan viem |

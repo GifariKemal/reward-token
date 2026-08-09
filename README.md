@@ -323,6 +323,13 @@ yang disengaja: sumber kebenarannya sedang menghilang, jadi snapshot menjadi sat
 satunya salinan. Seed menyertakan `sync_checkpoint`, sehingga klon baru langsung
 melanjutkan ke depan dan tidak mencoba memindai riwayat yang sudah tidak ada.
 
+Sejak Sesi 6, tabel `verdicts` ikut masuk seed, dan alasannya bahkan lebih kuat
+daripada soal pemangkasan RPC. Chain hanya menyimpan `true` atau `false`; **alasan di
+balik putusan AI tidak pernah ada di chain sama sekali**, jadi ia tidak bisa dipulihkan
+dengan mengindeks ulang, seberapa lengkap pun riwayat block-nya. Kalau berkas basis
+data hilang tanpa seed, yang tersisa hanya angka biner tanpa penjelasan, dan justru
+penjelasan itulah yang membuat jejaknya bisa diaudit.
+
 ```bash
 cd backend
 bun run seed:import   # pulihkan riwayat ke basis data kosong, aman diulang
