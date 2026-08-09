@@ -4,8 +4,11 @@ import { createPublicClient, fallback, http } from "viem";
 import { bscTestnet } from "viem/chains";
 import { RPC_URLS } from "../config";
 
+// rank: transport diurutkan berdasarkan kesehatan, yang bermasalah tidak selalu dicoba pertama
+// Di-export supaya wallet client (lib/wallet.ts) memakai daftar fallback yang sama
+export const transport = fallback(RPC_URLS.map((url) => http(url)), { rank: true });
+
 export const client = createPublicClient({
   chain: bscTestnet, // chainId 97, sudah tersedia di viem/chains
-  // rank: transport diurutkan berdasarkan kesehatan, yang bermasalah tidak selalu dicoba pertama
-  transport: fallback(RPC_URLS.map((url) => http(url)), { rank: true }),
+  transport,
 });

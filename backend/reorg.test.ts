@@ -1,5 +1,11 @@
 // Uji logika reorg tanpa jaringan: hash kanonik diinjeksi, bukan diambil dari chain.
 // Basis datanya sementara, diarahkan lewat DB_PATH sebelum modul db diimpor.
+//
+// PENTING: file ini harus dijalankan di prosesnya sendiri. `bun test` memuat semua
+// file uji dalam satu proses dan `src/lib/db.ts` membuka basis data sekali saja di
+// tingkat modul, jadi dua file uji akan berebut instance yang sama (DB_PATH yang
+// menang cuma milik file pertama, dan afterAll salah satunya menutup db milik yang
+// lain). Karena itu script `bun run test` menjalankan tiap file terpisah.
 
 import { afterAll, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
