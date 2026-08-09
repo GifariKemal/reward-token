@@ -58,6 +58,11 @@ export const uriAman = (uri: string) => {
 
 const ipv4Privat = (ip: string) => {
   const [a, b] = ip.split(".").map(Number);
+  // Bentuk yang tidak dikenali dianggap TIDAK aman. Tanpa baris ini, alamat IPv6 yang
+  // mengandung titik (mis. `::127.0.0.1` atau `64:ff9b::10.0.0.1`) dirutekan ke sini,
+  // `Number("::127")` menghasilkan NaN, semua perbandingan terhadap NaN bernilai false,
+  // dan fungsi yang kontraknya gagal-tertutup malah menjawab "publik".
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return true;
   return (
     a === 0 || a === 10 || a === 127 ||
     (a === 169 && b === 254) ||
@@ -70,11 +75,26 @@ const ipv4Privat = (ip: string) => {
 // Penjaga lapis kedua: yang menentukan aman atau tidak adalah ALAMAT IP hasil
 // resolusi, bukan tulisan hostname-nya. Tanpa ini, nama domain publik biasa yang
 // diarahkan ke 127.0.0.1 (mis. localtest.me) lolos penjaga lapis pertama.
+// `::ffff:7f00:1` adalah 127.0.0.1 yang ditulis heksa. Membuang prefiksnya saja tidak
+// cukup, sisanya harus diterjemahkan dulu ke bentuk bertitik.
+const heksaKeIpv4 = (s: string) => {
+  const [hi, lo] = s.split(":").map((x) => parseInt(x, 16));
+  if (s.split(":").length !== 2 || !Number.isFinite(hi) || !Number.isFinite(lo)) return null;
+  return `${hi! >> 8}.${hi! & 255}.${lo! >> 8}.${lo! & 255}`;
+};
+
 export const ipPrivat = (ip: string) => {
-  const tanpaPrefiks = ip.toLowerCase().replace(/^::ffff:/, "");
+  const bersih = ip.toLowerCase();
+  const tanpaPrefiks = bersih.replace(/^::ffff:/, "");
   if (tanpaPrefiks.includes(".")) return ipv4Privat(tanpaPrefiks);
-  return tanpaPrefiks === "::" || tanpaPrefiks === "::1" ||
-    /^f[cd]/.test(tanpaPrefiks) || /^fe[89ab]/.test(tanpaPrefiks);
+  if (bersih.startsWith("::ffff:")) return ipv4Privat(heksaKeIpv4(tanpaPrefiks) ?? "?");
+  if (tanpaPrefiks === "::" || tanpaPrefiks === "::1") return true;
+  if (/^f[cd]/.test(tanpaPrefiks)) return true; // unique local
+  if (/^fe[89ab]/.test(tanpaPrefiks)) return true; // link local
+  if (/^fec/.test(tanpaPrefiks)) return true; // site-local lama, usang tapi bisa dirutekan
+  // Apa pun yang bentuknya tidak dikenali dianggap TIDAK aman. Fungsi ini kontraknya
+  // gagal-tertutup, jadi tebakan yang salah harus jatuh ke sisi menolak.
+  return !/^[0-9a-f:]+$/.test(tanpaPrefiks);
 };
 
 // ponytail: masih ada celah waktu antara pemeriksaan dan pengambilan (DNS rebinding),
@@ -97,13 +117,19 @@ const fetchText = async (uri: string, maxChars = 8000) => {
   try {
     // redirect: "error" karena penjaga di atas hanya memeriksa URL PERTAMA. Tanpa ini,
     // URL publik yang membalas 302 ke http://127.0.0.1 tetap terambil.
-    // Konsekuensinya: bukti di balik pemendek tautan atau redirect apa pun dianggap
-    // tidak bisa diambil, jadi ditolak. Diverifikasi 9 Agustus 2026 bahwa
-    // raw.githubusercontent.com, gist.githubusercontent.com, dan ipfs.io menyajikan
-    // langsung tanpa redirect. Kalau suatu saat perlu mengikuti redirect, ikuti manual
-    // satu per satu dan periksa ulang setiap tujuan, jangan dilepas begitu saja.
+    // ponytail: konsekuensinya bukti di balik pemendek tautan atau redirect apa pun
+    // dianggap tidak bisa diambil, jadi ditolak. Kalau suatu saat redirect perlu
+    // didukung, ikuti manual satu per satu sambil memeriksa ulang tiap tujuan dengan
+    // `tujuanAman`, jangan mengembalikan `redirect: "follow"`. Diverifikasi 9 Agustus
+    // 2026 bahwa raw.githubusercontent.com, gist.githubusercontent.com, dan ipfs.io
+    // menyajikan langsung tanpa redirect, jadi jalur demo tidak terpengaruh.
     const res = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(20_000) });
-    if (!res.ok) throw new Error(String(res.status));
+    if (!res.ok) {
+      // badan respons dibatalkan dulu, kalau tidak soketnya ditahan sampai GC dan
+      // setiap 404 (kejadian normal untuk URI bukti) menyisakan satu
+      await res.body?.cancel().catch(() => {});
+      throw new Error(String(res.status));
+    }
     // Beda dari materi: dibaca mengalir lalu dihentikan setelah cukup. `res.text()`
     // mengunduh badan respons UTF-8 secara PENUH sebelum dipotong, jadi berkas bukti
     // 400 MB (atau 1 MB gzip yang mengembang) cukup untuk membuat proses juri di-OOM.
@@ -150,6 +176,10 @@ const uraiPutusan = (content: string) => {
   } catch {
     throw new Error(`jawaban LLM bukan JSON utuh: ${bersih.slice(0, 200)}`);
   }
+  // JSON.parse("null") sah dan menghasilkan null, jadi tanpa penjaga ini balasan
+  // "null" melempar TypeError alih-alih pesan jelas yang dijanjikan di atas.
+  if (typeof verdict !== "object" || verdict === null)
+    throw new Error(`jawaban LLM bukan objek: ${bersih.slice(0, 200)}`);
   const v = verdict as { eligible?: unknown; alasan?: unknown };
   if (typeof v.eligible !== "boolean")
     throw new Error(`eligible wajib boolean, dapat ${JSON.stringify(v.eligible)}`);

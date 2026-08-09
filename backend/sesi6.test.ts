@@ -90,6 +90,16 @@ describe("uriAman: penjaga SSRF sebelum backend mengambil URI dari luar", () => 
     expect(uriAman(`https://contoh.test/p?x=${"A".repeat(400)}`)).toBe(true);
   });
 
+  test("bentuk IPv6 bertitik tidak boleh gagal-TERBUKA", () => {
+    // Ini pernah lolos sebagai "publik": ipPrivat merutekan apa pun yang mengandung
+    // titik ke pemeriksa IPv4, Number("::127") jadi NaN, dan semua perbandingan
+    // terhadap NaN bernilai false. Satu-satunya fungsi yang kontraknya gagal-tertutup
+    // justru gagal-terbuka.
+    for (const ip of ["::127.0.0.1", "::ffff:7f00:1", "64:ff9b::10.0.0.1", "fec0::1", "omong-kosong"]) {
+      expect(ipPrivat(ip)).toBe(true);
+    }
+  });
+
   test("ipPrivat menilai ALAMAT hasil resolusi, bukan tulisan hostname", () => {
     // ini lapis kedua: nama domain publik yang diarahkan ke 127.0.0.1 (mis. localtest.me)
     // lolos penjaga hostname, jadi yang menentukan adalah IP-nya
@@ -154,6 +164,11 @@ describe("judgeSubmission: putusan LLM diurai dengan aman", () => {
   test("balasan tanpa JSON jadi error yang jelas, bukan TypeError", async () => {
     balas = () => jawabanLLM("Maaf, saya tidak bisa menilai ini.");
     expect(nilai()).rejects.toThrow(/bukan JSON utuh/);
+  });
+
+  test("balasan JSON null jadi pesan jelas, bukan TypeError", async () => {
+    balas = () => jawabanLLM("null");
+    expect(nilai()).rejects.toThrow(/bukan objek/);
   });
 
   test("balasan tanpa pilihan jawaban ditolak", async () => {
@@ -225,6 +240,26 @@ describe("query baru", () => {
     ]);
     expect(BigInt(papan[0]!.total_reward)).toBe(2n * BigInt(besar));
   });
+
+  test("worker dengan angka identik tetap berurutan sama, apa pun urutan masukannya", () => {
+    // Pembanding yang mengembalikan -1 untuk dua nilai yang sama tidak antisimetris,
+    // dan hasil sort jadi tidak terdefinisi: empat worker beridentik angka bisa keluar
+    // dalam tiga urutan berbeda tergantung urutan penyisipan. Peringkat yang berubah
+    // sendiri tiap request adalah bug yang sangat sulit dipercaya saat dilaporkan.
+    const urutan = [];
+    for (const susunan of [[0, 1, 2, 3], [3, 2, 1, 0], [1, 0, 3, 2]]) {
+      bersihkan();
+      for (const i of susunan) {
+        insertSubmission.run({
+          escrow: escrowA, worker: `0x${String(i).repeat(40)}`, proofUri: `x${i}`, txHash: `0xu${i}`,
+          blockNumber: 100 + i, blockHash: null, ts: 0,
+        });
+        markLatestSubmission(escrowA, "rewarded", "1000000000000000000");
+      }
+      urutan.push(getLeaderboard().map((r) => r.worker).join(","));
+    }
+    expect(new Set(urutan).size).toBe(1);
+  });
 });
 
 describe("endpoint /verdicts dan penjaga masukan /relay", () => {
@@ -258,6 +293,11 @@ describe("endpoint /verdicts dan penjaga masukan /relay", () => {
     expect((await kirim("/verdicts", { ...dasar, tx_hash: "A".repeat(100_000) })).status).toBe(400);
     expect((await kirim("/verdicts", { ...dasar, tx_hash: 12345 })).status).toBe(400);
     expect((await kirim("/verdicts", { ...dasar, tx_hash: { a: 1 } })).status).toBe(400);
+    // Array lolos regex karena RegExp.test memaksa argumennya jadi string lebih dulu,
+    // lalu melempar di driver SQLite yang strict sehingga jadi 500. Persis kegagalan
+    // yang validasi ini dibuat untuk mencegah, jadi tipenya wajib diperiksa duluan.
+    expect((await kirim("/verdicts", { ...dasar, tx_hash: [`0x${"a".repeat(64)}`] })).status).toBe(400);
+    expect((await kirim("/verdicts", { escrow: [escrow], worker, eligible: true, alasan: "x" })).status).toBe(400);
     expect((await kirim("/verdicts", { ...dasar, tx_hash: `0x${"a".repeat(64)}` })).status).toBe(201);
   });
 
@@ -275,9 +315,35 @@ describe("endpoint /verdicts dan penjaga masukan /relay", () => {
     expect((await app.request("/verdicts/bukan-alamat")).status).toBe(400);
   });
 
+  test("POST tanpa content-type JSON ditolak, karena CORS saja tidak menutup CSRF", async () => {
+    // text/plain adalah simple request: tidak memicu preflight, jadi pembatasan origin
+    // tidak pernah dilihat browser. Tanpa penjaga ini, halaman web mana pun bisa
+    // menyuruh relayer membelanjakan gas dan hadiah.
+    for (const ct of ["text/plain", "application/x-www-form-urlencoded", "multipart/form-data"]) {
+      const res = await app.request("/relay/bounty", {
+        method: "POST",
+        headers: { "content-type": ct },
+        body: JSON.stringify({ reward: "1", rules_uri: "https://contoh.test/R.md" }),
+      });
+      expect(res.status).toBe(415);
+    }
+    // tanpa header content-type sama sekali juga ditolak
+    expect((await app.request("/verdicts", { method: "POST", body: "{}" })).status).toBe(415);
+  });
+
+  test("alamat bercampur huruf diperlakukan seragam di semua route baca", async () => {
+    // isAddress viem default strict menolak checksum yang keliru. Semua route
+    // menormalkan ke huruf kecil dulu, jadi tidak ada lagi route yang 400 sementara
+    // route lain 200 untuk alamat yang sama.
+    const campur = "0x3333333333333333333333333333333333333333".toUpperCase().replace("0X", "0x");
+    expect((await app.request(`/verdicts/${campur}`)).status).toBe(200);
+  });
+
   test("POST /relay/bounty menolak reward dan URI berbahaya sebelum menyentuh chain", async () => {
     const R = "https://contoh.test/R.md";
-    for (const reward of ["1000", "0", "abc", "-5", "1e2", "0x64", " 5 ", ""]) {
+    // "0.0000000000000000001" punya 19 desimal: lolos batas angka tapi dipangkas
+    // parseEther jadi 0 wei, dan bounty lahir tanpa hadiah
+    for (const reward of ["1000", "0", "abc", "-5", "1e2", "0x64", " 5 ", "", "0.0000000000000000001"]) {
       const res = await kirim("/relay/bounty", { reward, rules_uri: R });
       expect(res.status).toBe(400);
       // "1e2" dan "0x64" lolos Number.isFinite tapi artinya beda di parseEther, jadi

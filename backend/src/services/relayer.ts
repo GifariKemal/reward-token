@@ -7,6 +7,11 @@ import { bountyCreatedEvent, bountyEscrowAbi, bountyFactoryAbi, rewardTokenAbi }
 import { client } from "../lib/chain";
 import { relayerWallet } from "../lib/wallet";
 
+// ponytail: pengiriman transaksi tidak diserikan, jadi dua permintaan tulis yang
+// bersamaan berlomba mengambil nonce pending yang sama di satu wallet dan salah
+// satunya tergusur. Dibiarkan karena demo dijalankan berurutan. Kalau nanti frontend
+// Sesi 7 bisa memicu dua permintaan sekaligus, naikkan ke rantai promise di tingkat
+// modul, sekitar tiga baris, yang menyerikan semua writeContract di berkas ini.
 const wallet = () => {
   if (!relayerWallet) throw new Error("RELAYER_PK belum diisi");
   return relayerWallet;

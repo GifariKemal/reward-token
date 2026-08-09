@@ -19,17 +19,24 @@ if (!LLM.apiKey) throw new Error("LLM_API_KEY belum diisi - cek .env");
 const oracle = await oracleOnchain();
 console.log(`Wallet juri    : ${oracleWallet.account.address}`);
 console.log(`Oracle on-chain: ${oracle}`);
+// Beda dari materi: berhenti, bukan sekadar memperingatkan. Kalau wallet juri bukan
+// oracle terdaftar, SETIAP fulfillVerification pasti revert BukanOracle. Meneruskan
+// berarti satu putaran polling membakar biaya LLM untuk seluruh antrean lalu gagal
+// mengirim semuanya, dan tiap kegagalan menambah hitungan menyerah di bawah.
 if (oracle.toLowerCase() !== oracleWallet.account.address.toLowerCase())
-  console.log("PERINGATAN: wallet juri BUKAN oracle di factory. Tx bakal revert BukanOracle.");
+  throw new Error("wallet juri BUKAN oracle di factory, semua verdict akan revert BukanOracle");
 
 const judged = new Set<string>();
+// Kegagalan sesaat (RPC ngadat, LLM timeout) tidak boleh disamakan dengan bukti
+// beracun. Item baru benar-benar dilepas setelah gagal tiga kali berturut-turut.
+const gagal = new Map<string, number>();
+const BATAS_GAGAL = 3;
 
 console.log(`Juri AI jalan, polling tiap ${POLL_INTERVAL_MS / 1000} detik.`);
 while (true) {
   try {
     // antrean langsung dari SQLite, tanpa lewat HTTP
     for (const item of getPending()) {
-      const escrow = getAddress(item.escrow);
       // Berkunci tx_hash, bukan proof_uri seperti materi: setelah ditolak escrow
       // kembali ke Dibuka, jadi worker boleh memperbaiki isi berkas lalu submit lagi
       // dengan URL yang sama. Kunci berbasis URL membuat submission kedua itu
@@ -43,6 +50,9 @@ while (true) {
       // tidak pernah dinilai. Satu berkas bukti yang membuat balasan LLM tidak bisa
       // diurai cukup untuk membekukan juri sambil terus menagih biaya LLM.
       try {
+        // getAddress ikut di dalam try: alamat cacat di satu baris basis data tidak
+        // boleh melempar keluar dari perulangan dan membekukan seluruh antrean
+        const escrow = getAddress(item.escrow);
         // basis data itu cache → cek ulang ke chain sebelum kirim tx
         const e = await readEscrow(escrow);
         if (e.status !== "Disubmit") {
@@ -55,38 +65,44 @@ while (true) {
         const { eligible, alasan } = await judgeSubmission(e.rulesURI, e.proofURI, e.worker);
         console.log(`  verdict AI: ${eligible ? "ELIGIBLE" : "DITOLAK"} (${alasan})`);
 
-        // Ditandai SEBELUM kirim, beda dari materi yang menandai sesudah. Kalau
-        // waitForTransactionReceipt kehabisan waktu setelah transaksi tersiar, materi
-        // tidak pernah sampai ke penandaan, lalu polling berikutnya mengirim verdict
-        // KEDUA untuk transaksi yang sebetulnya sedang menuju blok.
-        judged.add(key);
+        // Penandaan dilakukan SETELAH pengiriman berhasil, dan itu keputusan sadar.
+        // Menandai sebelum kirim melindungi dari satu skenario (menunggu receipt
+        // kehabisan waktu padahal transaksi sudah tersiar, lalu polling berikutnya
+        // mengirim verdict kedua), tapi harganya jauh lebih mahal: gangguan RPC
+        // sesaat ikut membuang bounty itu selamanya sehingga dananya terkunci di
+        // escrow tanpa ada yang bisa memutuskan lagi. Skenario tx ganda sendiri sudah
+        // dijinakkan dua lapis: pembacaan status di baris atas melewati escrow yang
+        // sudah diputus, dan kontrak menolak verdict kedua karena statusnya bukan
+        // Disubmit lagi, jadi kerugian terburuknya satu transaksi revert.
         const { hash, sukses } = await sendVerdict(escrow, eligible);
         console.log(`  tx: ${hash} (${sukses ? "sukses" : "GAGAL"})`);
+        if (!sukses) throw new Error(`verdict revert on-chain, tx ${hash}`);
+        judged.add(key);
 
-        if (sukses) {
-          // Penulisan alasan dibungkus sendiri: gagalnya tulis (mis. SQLITE_BUSY
-          // karena proses indexer sedang menulis) tidak boleh terlihat seperti
-          // gagalnya putusan, dan harus berteriak karena pembayarannya sudah terjadi.
-          try {
-            insertVerdict.run({
-              escrow: escrow.toLowerCase(),
-              worker: e.worker.toLowerCase(),
-              eligible: eligible ? 1 : 0,
-              alasan,
-              txHash: hash,
-              ts: Date.now(),
-            });
-          } catch (e) {
-            console.error(`PENTING: verdict ${hash} sudah on-chain tapi alasannya gagal disimpan: ${e}`);
-          }
+        // Penulisan alasan dibungkus sendiri: gagalnya tulis (mis. SQLITE_BUSY karena
+        // proses indexer sedang menulis) tidak boleh terlihat seperti gagalnya
+        // putusan, dan harus berteriak karena pembayarannya sudah terjadi.
+        try {
+          insertVerdict.run({
+            escrow: escrow.toLowerCase(),
+            worker: e.worker.toLowerCase(),
+            eligible: eligible ? 1 : 0,
+            alasan,
+            txHash: hash,
+            ts: Date.now(),
+          });
+        } catch (e) {
+          console.error(`PENTING: verdict ${hash} sudah on-chain tapi alasannya gagal disimpan: ${e}`);
         }
       } catch (e) {
-        // Ditandai supaya tidak menghalangi antrean. Konsekuensinya item ini baru
-        // dicoba lagi setelah proses juri di-restart, termasuk kalau penyebabnya
-        // cuma RPC yang sedang bermasalah. Itu pertukaran yang disengaja: lebih baik
-        // satu item tertunda daripada seluruh antrean berhenti.
-        judged.add(key);
-        console.error(`  dilewati (${key}): ${(e as { shortMessage?: string })?.shortMessage ?? e}`);
+        // Tidak langsung dilepas: gangguan sesaat pantas dicoba lagi, bukti beracun
+        // tidak. Setelah BATAS_GAGAL kali berturut-turut barulah item ini ditandai
+        // supaya tidak menyandera antrean di belakangnya.
+        const n = (gagal.get(key) ?? 0) + 1;
+        gagal.set(key, n);
+        if (n >= BATAS_GAGAL) judged.add(key);
+        const pesan = (e as { shortMessage?: string })?.shortMessage ?? e;
+        console.error(`  gagal ${n}/${BATAS_GAGAL} (${key}): ${pesan}${n >= BATAS_GAGAL ? " - dilepas" : ""}`);
       }
     }
   } catch (e) {

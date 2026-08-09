@@ -9,7 +9,7 @@
   <img alt="solidity" src="https://img.shields.io/badge/Solidity-0.8.20-363636">
   <img alt="foundry" src="https://img.shields.io/badge/built%20with-Foundry-black">
   <img alt="chain" src="https://img.shields.io/badge/BNB%20Smart%20Chain-Testnet%2097-F0B90B">
-  <img alt="tests" src="https://img.shields.io/badge/tests-50%20kontrak%20%2B%2026%20backend-brightgreen">
+  <img alt="tests" src="https://img.shields.io/badge/tests-50%20kontrak%20%2B%2031%20backend-brightgreen">
   <img alt="coverage" src="https://img.shields.io/badge/coverage%20kontrak-100%25-brightgreen">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
 </p>
@@ -46,7 +46,9 @@ Rinciannya, termasuk alasan setiap keputusan desain, ada di
 
 ## Alamat live
 
-Ketiganya sudah terverifikasi sumbernya di BscScan Testnet.
+Dua alamat tetap di bawah, keduanya sudah terverifikasi sumbernya di BscScan Testnet.
+Escrow tidak punya alamat tetap karena dicetak factory, tapi ikut terverifikasi sendiri
+begitu lahir, sebab bytecode-nya cocok dengan factory yang sudah terverifikasi.
 
 | Kontrak | Alamat |
 |---|---|
@@ -116,8 +118,13 @@ membaca chain yang sama dengan cara berbeda.
 > - `seed.ts` dan `seed.sql`, untuk ketahanan data (penjelasan di bawah)
 > - penjaga di jalur Sesi 6, semuanya di batas kepercayaan, dirinci lengkap di tabel
 >   [Juri AI](#juri-ai). Yang paling penting: `eligible` wajib boolean sungguhan,
->   balasan LLM diurai utuh, penjaga SSRF dua lapis, dan asal-usul escrow ditanyakan
->   ke rantai
+>   balasan LLM diurai utuh, penjaga SSRF dua lapis, dan keanggotaan escrow ditanyakan
+>   ke registri factory
+> - susulan sekali jalan untuk escrow yang baru lahir, di `src/indexer/watch.ts`.
+>   Tanpa itu, submit yang dikirim langsung setelah bounty dibuat tidak pernah
+>   tertangkap sampai proses direstart, dan itu justru alur demo yang paling wajar
+> - semua POST wajib `content-type: application/json`, di `src/routes/api.ts`.
+>   Membatasi origin saja tidak menutup CSRF
 > - `escrow` disimpan huruf kecil di semua tabel. Sebelumnya `bounties` memakai bentuk
 >   checksum dari argumen event sedangkan `submissions` memakai `log.address` yang
 >   huruf kecil, sehingga penyambungan dua tabel itu mengembalikan nol baris
@@ -168,19 +175,20 @@ sequenceDiagram
     participant W as Worker
     participant E as BountyEscrow
     participant I as Indexer (bun dev)
+    participant D as SQLite
     participant J as Juri AI (bun oracle)
     participant L as LLM
 
     W->>E: submitWork(proofURI)
     E-->>I: WorkSubmitted
-    I->>I: simpan status "submitted"
-    J->>I: ambil antrean dari SQLite
+    I->>D: simpan status "submitted"
+    J->>D: ambil antrean, baca berkas langsung
     J->>E: baca ulang status, rulesURI, proofURI
     J->>L: rules dan proof sebagai DATA JSON
     L-->>J: {"eligible": bool, "alasan": "..."}
     J->>E: fulfillVerification(eligible)
     E-->>I: RewardReleased atau WorkRejected
-    J->>J: simpan alasan ke tabel verdicts
+    J->>D: simpan alasan ke tabel verdicts
 ```
 
 Dua hal yang membuat alur ini tidak sekadar tempelan AI:
@@ -218,14 +226,15 @@ Semuanya diberi komentar di tempatnya, dan yang bisa diuji tanpa jaringan punya 
 | SSRF | `proofURI` datang dari siapa pun yang memanggil `submitWork`, lalu diambil oleh backend. `http://169.254.169.254/` berarti backend menarik metadata cloud dan menyerahkannya ke LLM | dua lapis: `uriAman()` menyaring skema, panjang, dan hostname internal tanpa jaringan; lalu hostname diresolusi dan ditolak kalau IP-nya privat, karena nama domain publik biasa boleh diarahkan ke `127.0.0.1`. `redirect: "error"` menutup jalur 302 ke host internal |
 | Juri di-OOM | `res.text()` mengunduh badan respons PENUH sebelum dipotong 8.000 karakter. Bukti 400 MB (atau 1 MB gzip yang mengembang) mematikan proses juri | badan respons dibaca mengalir dan dihentikan setelah cukup |
 | Relayer dikuras | `/relay/bounty` tanpa autentikasi membelanjakan gas dan hadiah RWD. Panjang URI juga biaya: `rulesURI` disimpan di storage escrow, jadi 10 KB berarti jutaan gas | nilai hadiah divalidasi sebagai STRING yang benar-benar dipakai `parseEther` (`"1e2"` dan `"0x64"` lolos `Number.isFinite` tapi artinya beda), tenggat wajib bilangan bulat, panjang URI dibatasi 512 |
-| Relayer menandatangani ke kontrak sembarang | memastikan ada bytecode saja tidak cukup: kontrak jahat dengan fungsi `submitWork(string)` bisa membakar gas relayer tanpa revert, dan escrow sah milik orang lain bisa direbut worker-nya | `escrowSah()` menanyakan asal-usulnya ke rantai, yaitu `factory` immutable di escrow harus sama dengan factory kita. Otoritatif dan tidak balapan dengan indexer |
+| Relayer menandatangani ke kontrak sembarang | memastikan ada bytecode saja tidak cukup: kontrak jahat dengan fungsi `submitWork(string)` bisa membakar gas relayer tanpa revert. Membaca `factory()` di alamat itu juga tidak cukup, dan sempat saya pakai: yang ditanya justru tersangkanya, jadi kontrak jahat tinggal mengembalikan alamat factory kita | `escrowSah()` mencocokkan alamat ke **registri milik factory** (`bounties(i)`), satu multicall, tidak bisa dipalsukan siapa pun dan tidak balapan dengan indexer |
 | Transaksi kosong yang mengaku sukses | alamat tanpa kode menerima calldata apa pun tanpa revert, jadi satu alamat salah tempel membalas `{"sukses": true}` untuk transaksi yang tidak melakukan apa-apa | tertutup oleh `escrowSah()` yang sama |
 | Bounty gagal dilaporkan berhasil | `createBounty` tidak memeriksa `receipt.status`, jadi tx yang revert tetap dibalas HTTP 201 dengan `escrow` kosong | status receipt dan keberadaan event diperiksa sebelum membalas |
-| Satu bukti beracun membekukan juri | `try` membungkus seluruh perulangan, jadi gagalnya satu item melompat keluar sebelum ditandai selesai. Item itu dicoba ulang tiap 15 detik selamanya dan semua submission di belakangnya tidak pernah dinilai | `try` per item, dan item gagal ditandai supaya tidak menyandera antrean |
-| Verdict dikirim dua kali | penandaan dilakukan SETELAH transaksi. Kalau menunggu receipt kehabisan waktu padahal transaksi sudah tersiar, polling berikutnya mengirim verdict kedua | ditandai sebelum kirim, dan penulisan alasan dibungkus sendiri supaya gagalnya tulis tidak terlihat seperti gagalnya putusan |
+| Satu bukti beracun membekukan juri | `try` membungkus seluruh perulangan, jadi gagalnya satu item melompat keluar sebelum ditandai selesai. Item itu dicoba ulang tiap 15 detik selamanya dan semua submission di belakangnya tidak pernah dinilai | `try` per item, dan item dilepas setelah gagal tiga kali berturut-turut. Bukan sekali: gangguan RPC sesaat tidak boleh disamakan dengan bukti beracun, karena melepas item berarti dananya terkunci di escrow tanpa ada yang bisa memutuskan lagi |
+| Verdict gagal tanpa jejak | penulisan alasan ikut gagal diam-diam padahal pembayaran sudah terjadi | penulisan alasan dibungkus sendiri dan berteriak kalau gagal; `sukses: false` diperlakukan sebagai kegagalan yang dicoba lagi, bukan sebagai selesai |
+| Juri jalan padahal pasti gagal | wallet juri yang bukan oracle terdaftar hanya diperingatkan, lalu setiap verdict revert `BukanOracle` sambil tetap membakar biaya LLM untuk seluruh antrean | proses berhenti di awal dengan pesan jelas |
 | Submission perbaikan diabaikan permanen | kunci idempoten berbasis `proofURI`. Setelah ditolak, escrow kembali Dibuka sehingga worker boleh memperbaiki isi berkas di URL yang sama, dan submission barunya tidak pernah dinilai | kunci memakai `tx_hash`, yang sudah `UNIQUE` di skema |
-| Situs mana pun ikut menyuruh relayer | `cors()` telanjang membalas `Allow-Origin: *`, jadi halaman web apa pun yang dibuka di mesin ini bisa memanggil `/relay/*` tanpa penyerang perlu akses jaringan ke port 3000 | CORS dibatasi ke origin localhost |
-| Jejak audit dipalsukan lewat field sebelahnya | `tx_hash` di `POST /verdicts` tidak divalidasi, jadi batas 2.000 karakter pada `alasan` cuma hiasan, dan nilai bukan-string membuat driver melempar sehingga jadi 500 | `tx_hash` wajib hash 32 byte |
+| Situs mana pun ikut menyuruh relayer | `cors()` telanjang membalas `Allow-Origin: *`. Membatasi origin saja TIDAK cukup, dan sempat saya klaim cukup: CORS memblokir pembacaan respons lintas origin, bukan pengirimannya, sehingga POST ber-`content-type: text/plain` lolos sebagai simple request tanpa preflight dan Hono tetap mem-parse badannya sebagai JSON. Transaksi jalan walau penyerang tidak bisa membaca balasan | dua lapis: origin dibatasi ke localhost, DAN semua POST wajib `content-type: application/json`. Yang `text/plain` ditolak 415, sedangkan yang `application/json` bukan simple request sehingga wajib preflight dan preflight-nya gagal di pembatasan origin |
+| Jejak audit dipalsukan lewat field sebelahnya | `tx_hash` di `POST /verdicts` tidak divalidasi, jadi batas 2.000 karakter pada `alasan` cuma hiasan, dan nilai bukan-string membuat driver melempar sehingga jadi 500 | `tx_hash` boleh dikosongkan, tapi kalau diisi wajib berbentuk hash 32 byte |
 | Salah tempel kunci mematikan semuanya | MetaMask mengekspor private key TANPA prefiks `0x`, dan kunci begitu membuat `privateKeyToAccount` melempar saat modul dimuat, sehingga `bun dev` DAN `bun oracle` gagal start | bentuk kunci diperiksa, salah bentuk dilaporkan jelas lalu fiturnya saja yang mati |
 | Juri terlihat sehat lalu diam | `LLM_API_KEY` kosong membuat juri mencetak semua tanda sehat lalu melempar 401 tiap 15 detik ke log | keberadaannya diperiksa saat start, sejajar dengan pemeriksaan `ORACLE_PK` |
 
@@ -237,13 +246,15 @@ Semuanya diberi komentar di tempatnya, dan yang bisa diuji tanpa jaringan punya 
 > palsu yang disajikan bercampur dengan yang asli.
 
 > [!NOTE]
-> Batas yang masih diketahui dan ditandai `ponytail:` di kode: (1) masih ada celah
-> waktu antara pemeriksaan IP dan pengambilan, karena `fetch` me-resolve ulang sendiri,
-> menutupnya butuh menyambung ke IP yang sudah diperiksa dan mengirim header `Host`
-> manual; (2) dua permintaan tulis yang bersamaan berlomba nonce di satu wallet,
-> penutupnya rantai promise di tingkat modul, tidak dipasang karena demo dijalankan
-> berurutan; (3) bukti di balik pemendek tautan ikut tertolak sebagai efek samping
-> `redirect: "error"`.
+> Batas yang masih diketahui, semuanya ditandai `ponytail:` di kode beserta jalur
+> naiknya: (1) celah waktu antara pemeriksaan IP dan pengambilan, karena `fetch`
+> me-resolve ulang sendiri, menutupnya butuh menyambung ke IP yang sudah diperiksa dan
+> mengirim header `Host` manual (`services/judge.ts`); (2) bukti di balik pemendek
+> tautan ikut tertolak sebagai efek samping `redirect: "error"` (`services/judge.ts`);
+> (3) dua permintaan tulis yang bersamaan berlomba nonce di satu wallet, penutupnya
+> rantai promise di tingkat modul, tidak dipasang karena demo dijalankan berurutan
+> (`services/relayer.ts`); (4) pemeriksaan keanggotaan escrow diletakkan di route,
+> bukan di service, karena pemanggilnya baru satu (`routes/api.ts`).
 
 ### Ketahanan terhadap prompt injection, hasil pengukuran
 
@@ -411,7 +422,7 @@ tunggu sampai baris ringkasan backfill muncul.
 ```bash
 forge test                                            # 50 test kontrak
 forge coverage --no-match-coverage "script/"          # 100 persen
-cd backend && bun run typecheck && bun run test       # 19 test backend
+cd backend && bun run typecheck && bun run test       # 31 test backend
 cd ponder  && bun run codegen && bunx tsc --noEmit    # typecheck ponder
 ```
 
@@ -421,8 +432,8 @@ cd ponder  && bun run codegen && bunx tsc --noEmit    # typecheck ponder
 | `BountyFactory.sol` | 19/19 | 19/19 | 3/3 | 4/4 |
 | `RewardToken.sol` | 17/17 | 18/18 | 3/3 | 6/6 |
 
-26 test backend berjalan tanpa jaringan dan tanpa uang: 4 untuk logika reorg (hash
-kanonik diinjeksi), 22 untuk jalur Sesi 6 (penjaga SSRF dua lapis termasuk bentuk
+31 test backend berjalan tanpa jaringan dan tanpa uang: 4 untuk logika reorg (hash
+kanonik diinjeksi), 27 untuk jalur Sesi 6 (penjaga SSRF dua lapis termasuk bentuk
 IPv6 dan IPv4 tersamar, penguraian balasan LLM lewat server tiruan OpenAI-compatible
 termasuk kasus `eligible` bukan boolean dan prosa yang mengutip JSON, penjumlahan wei
 dengan BigInt, dan validasi masukan endpoint). Yang tidak bisa diuji tanpa jaringan
@@ -452,7 +463,7 @@ backend/            indexer custom, REST, dan juri AI
   src/oracle.ts     entry point kedua, loop juri AI
   seed.sql          snapshot riwayat, satu-satunya salinan setelah RPC memangkas
   reorg.test.ts     4 test logika reorg, tanpa jaringan
-  sesi6.test.ts     22 test jalur Sesi 6, LLM diganti server tiruan
+  sesi6.test.ts     27 test jalur Sesi 6, LLM diganti server tiruan
   periksa-sesi6.ts  verifikasi independen ke chain, tanpa memakai kode backend
 ponder/             indexer Ponder, GraphQL
 broadcast/          catatan transaksi deploy chain 97

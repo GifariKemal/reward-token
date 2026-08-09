@@ -23,7 +23,7 @@ mematikan fitur terkait, indexer dan endpoint baca tetap jalan.
 
 ```bash
 bun run typecheck        # tsc --noEmit
-bun run test             # 26 test, tanpa jaringan
+bun run test             # 31 test, tanpa jaringan
 bun run periksa-sesi6.ts # verifikasi ke chain, bukan ke log backend
 ```
 
@@ -73,7 +73,7 @@ route tak dikenal balas `404`.
 | `src/oracle.ts` | Entry point kedua: loop juri AI |
 | `seed.ts`, `seed.sql` | Ekspor dan impor snapshot riwayat |
 | `reorg.test.ts` | 4 test logika reorg, hash kanonik diinjeksi |
-| `sesi6.test.ts` | 15 test jalur Sesi 6, LLM diganti server tiruan |
+| `sesi6.test.ts` | 27 test jalur Sesi 6, LLM diganti server tiruan |
 | `periksa-sesi6.ts` | Verifikasi independen ke chain dengan viem |
 
 ## Konfigurasi environment
@@ -86,8 +86,8 @@ route tak dikenal balas `404`.
 | `DB_PATH` | tidak | Lokasi berkas SQLite, dipakai test supaya tidak menyentuh basis data sungguhan |
 | `RELAYER_PK` | untuk `/relay/*` | Kunci privat pembayar gas dan hadiah |
 | `ORACLE_PK` | untuk `bun oracle` | Kunci privat juri. Alamatnya wajib terdaftar sebagai oracle di factory |
-| `LLM_BASE_URL` | untuk `bun oracle` | Endpoint OpenAI-compatible, misalnya OpenAI, OpenRouter, Groq, atau GLM |
-| `LLM_MODEL` | untuk `bun oracle` | Nama model di provider tersebut |
+| `LLM_BASE_URL` | tidak | Endpoint OpenAI-compatible, misalnya OpenAI, OpenRouter, Groq, atau GLM. Default `https://api.openai.com/v1` |
+| `LLM_MODEL` | tidak | Nama model di provider tersebut. Default `gpt-4o-mini` |
 | `LLM_API_KEY` | untuk `bun oracle` | Kunci API provider |
 | `POLL_INTERVAL_SECONDS` | tidak | Jeda polling juri, default 15 |
 

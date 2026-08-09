@@ -41,16 +41,35 @@ export const board = async () => ({
 // (2) memastikan ada bytecode saja tidak cukup, karena kontrak mana pun yang punya
 //     fungsi submitWork(string) tetap lolos. Kontrak jahat bisa membakar gas relayer
 //     tanpa revert, dan escrow sah milik orang lain bisa direbut worker-nya.
-// Karena itu yang ditanya ke rantai adalah asal-usulnya: escrow sah selalu menyimpan
-// alamat factory pembuatnya di `factory` immutable. Ini otoritatif dan tidak balapan
-// dengan indexer, berbeda dari mencocokkan ke daftar escrow di basis data yang baru
-// terisi beberapa detik setelah bounty dibuat.
+// Yang ditanya adalah REGISTRI FACTORY, bukan escrow-nya sendiri. Sempat saya tulis
+// dengan membaca `factory()` di alamat itu lalu mencocokkannya, dan itu tidak
+// otoritatif: yang ditanya justru tersangkanya, jadi kontrak jahat tinggal
+// mengembalikan alamat factory kita dan lolos. Registri factory tidak bisa dipalsukan
+// siapa pun. Tidak balapan dengan indexer juga, karena dibaca dari chain.
+//
+// ponytail: satu multicall berisi N pembacaan, jadi tetap satu permintaan RPC berapa
+// pun jumlah bounty-nya, cuma calldata-nya tumbuh. Kalau jumlah bounty pernah mencapai
+// ribuan, simpan hasilnya di memori dan segarkan saat totalBounties bertambah.
 export const escrowSah = async (addr: Address) => {
   try {
-    const factory = await client.readContract({ address: addr, abi: bountyEscrowAbi, functionName: "factory" });
-    return factory.toLowerCase() === CONTRACTS.bountyFactory.toLowerCase();
+    const total = await client.readContract({
+      address: CONTRACTS.bountyFactory,
+      abi: bountyFactoryAbi,
+      functionName: "totalBounties",
+    });
+    if (total === 0n) return false;
+    const daftar = await client.multicall({
+      contracts: Array.from({ length: Number(total) }, (_, i) => ({
+        address: CONTRACTS.bountyFactory,
+        abi: bountyFactoryAbi,
+        functionName: "bounties" as const,
+        args: [BigInt(i)] as const,
+      })),
+      allowFailure: false,
+    });
+    return daftar.some((e) => e.toLowerCase() === addr.toLowerCase());
   } catch {
-    return false; // tanpa bytecode, atau punya bytecode tapi bukan escrow
+    return false;
   }
 };
 

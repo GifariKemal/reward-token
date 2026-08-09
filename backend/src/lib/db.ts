@@ -84,7 +84,10 @@ for (const t of ["bounties", "submissions"]) {
 // perbandingan string mentah akan mendapat NOL baris. Ini ranjau untuk frontend
 // Sesi 7, jadi diberesi di sumbernya (lihat indexer/handlers.ts) sekaligus di baris
 // yang sudah tersimpan.
-db.exec("UPDATE bounties SET escrow = lower(escrow) WHERE escrow <> lower(escrow)");
+// OR IGNORE: kolomnya UNIQUE, jadi kalau bentuk checksum dan bentuk huruf kecil dari
+// alamat yang sama pernah bersanding, UPDATE biasa akan melempar di tingkat modul dan
+// membuat KEDUA proses menolak start tanpa cara membetulkannya lewat aplikasi.
+db.exec("UPDATE OR IGNORE bounties SET escrow = lower(escrow) WHERE escrow <> lower(escrow)");
 
 // Bentuk baris tabel (dipakai di services/routes)
 export type BountyRow = {
@@ -173,9 +176,18 @@ export const getLeaderboard = () => {
   }
   return [...skor]
     .map(([worker, s]) => ({ worker, wins: s.wins, total_reward: s.total.toString() }))
-    // seri jumlah menang dipecah oleh total hadiah, supaya urutannya tidak bergantung
-    // pada urutan penyisipan Map
-    .sort((a, b) => b.wins - a.wins || (BigInt(b.total_reward) > BigInt(a.total_reward) ? 1 : -1));
+    // Seri jumlah menang dipecah oleh total hadiah, lalu oleh alamat worker supaya
+    // urutannya tidak bergantung pada urutan penyisipan Map. Cabang terakhir WAJIB
+    // ada: pembanding yang mengembalikan -1 untuk dua nilai yang sama bukan cuma
+    // salah urut, ia tidak antisimetris sehingga hasil sort jadi tidak terdefinisi
+    // dan berubah-ubah mengikuti urutan masukan.
+    .sort((a, b) => {
+      if (a.wins !== b.wins) return b.wins - a.wins;
+      const ta = BigInt(a.total_reward);
+      const tb = BigInt(b.total_reward);
+      if (ta !== tb) return tb > ta ? 1 : -1;
+      return a.worker < b.worker ? -1 : a.worker > b.worker ? 1 : 0;
+    });
 };
 
 // Verdict AI: hasil + alasan (chain cuma tahu true/false, alasannya disimpan di sini)
