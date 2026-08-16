@@ -6,11 +6,19 @@ import { CHAIN, config } from "./wagmi";
 // BSC testnet menolak EIP-1559 → gasPrice eksplisit bikin transaksi jadi legacy
 const gasPrice = () => getGasPrice(config, { chainId: CHAIN.id });
 
-// Beda dari materi (bagian Tambahan 4 dipakai sejak awal): chainId disebut eksplisit di
-// setiap panggilan. Tanpa itu wagmi menandatangani ke chain apa pun yang sedang aktif di
-// wallet, dan alamat kontrak yang sama bisa berisi kontrak lain di chain lain — artinya
-// hadiah dikirim ke alamat asing tanpa pesan salah apa pun. Dengan chainId, wagmi
-// menolak sebelum tanda tangan.
+// Beda dari materi: chainId disebut eksplisit di setiap panggilan, dan untuk jalur
+// TULIS ini benar-benar menambal lubang, bukan sekadar rapi. Sudah dibuktikan dengan
+// connector tiruan: `writeContract` mengambil chain dari `connection.chainId` (wallet),
+// bukan dari state wagmi, lalu `assertChainId` dimatikan sehingga viem MELEWATI
+// `assertCurrentChain`. Hasilnya `eth_sendTransaction` sungguh terkirim ke jaringan
+// yang sedang aktif di wallet, dan alamat yang sama bisa berisi kontrak lain di sana.
+// Dengan chainId, wagmi berhenti di `eth_chainId` dan melempar sebelum tanda tangan.
+// Yang paling berbahaya bukan submitWork melainkan approve: tanpa chainId, allowance
+// dibaca di chain 97 lalu izinnya ditandatangani di chain lain.
+//
+// Catatan: di jalur BACA (useReadContract, watcher, getGasPrice,
+// waitForTransactionReceipt) chainId cuma jaring pengaman, sebab semuanya lewat
+// `config.state.chainId` yang wagmi jaga tetap 97.
 const CHAIN_ID = { chainId: CHAIN.id } as const;
 
 // Factory menarik RWD dari dompet pembuat saat createBounty → butuh izin sekali di awal

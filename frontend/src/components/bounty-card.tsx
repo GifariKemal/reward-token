@@ -36,9 +36,9 @@ export function BountyCard({ bounty, account }: { bounty: Bounty; account?: Addr
   });
 
   // Deadline tidak ada di API backend — baca langsung dari kontrak escrow.
-  // chainId eksplisit: tanpa itu wagmi membaca dari chain yang sedang aktif di wallet,
-  // dan kalau wallet-nya sedang di jaringan lain alamat ini kosong sehingga hitung
-  // mundur menghilang tanpa pesan salah apa pun.
+  // chainId eksplisit di sini jaring pengaman, bukan penambal bug: jalur baca memakai
+  // `config.state.chainId` yang wagmi jaga tetap 97 selama `chains` cuma berisi
+  // bscTestnet. Lihat catatan lengkapnya di hooks/use-auto-refresh.ts.
   const { data: deadline } = useReadContract({
     address: bounty.escrow,
     abi: bountyEscrowAbi,

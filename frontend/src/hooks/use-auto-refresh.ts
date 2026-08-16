@@ -8,9 +8,14 @@ export function useAutoRefresh(escrows: Address[]) {
   const queryClient = useQueryClient();
   const segarkanPapan = () => queryClient.invalidateQueries({ queryKey: ["board"] });
 
-  // chainId eksplisit di semua watcher: tanpa itu wagmi mendengarkan chain yang sedang
-  // aktif di wallet, jadi begitu pengguna pindah jaringan papan berhenti menyegarkan
-  // diri tanpa tanda apa pun.
+  // chainId eksplisit di semua watcher. KOREKSI atas alasan yang sempat saya tulis di
+  // sini: ini BUKAN penambal bug. Dugaan saya bahwa papan berhenti menyegarkan diri
+  // saat wallet pindah jaringan terbantahkan, sebab wagmi menolak menyinkronkan
+  // state-nya ke chain yang tidak terdaftar di `config.chains` (`createConfig`,
+  // `if (!isChainConfigured) return`), dan daftar kita cuma berisi bscTestnet. Jadi
+  // `useChainId()` selalu 97. Nilainya di sini jaring pengaman: begitu `chains` diisi
+  // lebih dari satu, watcher ini tetap mendengarkan chain yang benar.
+  // Beda dengan jalur TULIS di actions.ts, di situ chainId memang menambal lubang.
   // Bounty baru dibuat orang lain → papan bertambah
   useWatchContractEvent({
     address: CONTRACTS.bountyFactory,
