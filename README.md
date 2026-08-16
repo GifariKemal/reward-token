@@ -16,8 +16,12 @@
 
 > [!NOTE]
 > Repositori latihan Indonesia Web3 Hackathon 2026 (bootcamp DevWeb3 Jogja), Sesi 3
-> sampai Sesi 6. Semua kontrak jalan di **BNB Smart Chain Testnet**, tidak ada nilai
+> sampai Sesi 7. Semua kontrak jalan di **BNB Smart Chain Testnet**, tidak ada nilai
 > uang sungguhan. Token hadiah adalah token uji yang dicetak sendiri.
+
+Sejak Sesi 7 papan ini punya antarmuka: dApp React yang membaca dari backend dan
+menulis ke kontrak lewat wallet penggunanya sendiri. Lihat
+[`frontend/README.md`](frontend/README.md).
 
 ## Daftar Isi
 
@@ -472,7 +476,12 @@ backend/            indexer custom, REST, dan juri AI
   reorg.test.ts     4 test logika reorg, tanpa jaringan
   sesi6.test.ts     27 test jalur Sesi 6, LLM diganti server tiruan
   periksa-sesi6.ts  verifikasi independen ke chain, tanpa memakai kode backend
+  periksa-celah.ts  bukti rentang block yang belum di-backfill memang kosong
 ponder/             indexer Ponder, GraphQL
+frontend/           dApp UI Sesi 7, React plus wagmi plus RainbowKit
+  src/lib/          api (baca backend), actions (tulis ke chain), wagmi, contracts
+  src/components/   kartu bounty, form bikin, peringkat, punyaku, tombol wallet
+  src/hooks/        auto refresh dari event chain, hitung mundur deadline
 broadcast/          catatan transaksi deploy chain 97
 ```
 

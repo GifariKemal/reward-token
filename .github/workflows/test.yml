@@ -87,3 +87,30 @@ jobs:
       - name: Typecheck ponder
         run: bunx tsc --noEmit
         working-directory: ponder
+
+  # Frontend Sesi 7. Tanpa job ini, dApp bisa gagal build sementara CI tetap hijau,
+  # sebab dua job di atas tidak menyentuh frontend/ sama sekali.
+  frontend:
+    name: Frontend (dApp UI)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+        working-directory: frontend
+
+      - name: Periksa format
+        run: bun run format:check
+        working-directory: frontend
+
+      - name: Build (sekaligus typecheck lewat tsc -b)
+        run: bun run build
+        working-directory: frontend
