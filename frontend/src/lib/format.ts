@@ -6,12 +6,19 @@ export const pendek = (addr: string) => `${addr.slice(0, 6)}…${addr.slice(-4)}
 // wei → "10 RWD"
 export const rwd = (wei: string | bigint) => `${Number(formatEther(BigInt(wei))).toLocaleString("id-ID")} RWD`;
 
-// Di luar materi. `rulesURI` dan `proofURI` ditulis SIAPA PUN ke kontrak, lalu kita
-// pasang apa adanya di atribut href. React tidak menyaring skema, jadi
-// `javascript:...` di situ benar-benar dieksekusi saat tautannya diklik, di origin
-// yang sama dengan dompet yang sedang tersambung. Karakter kendali dibuang lebih dulu
-// karena browser mengabaikannya saat membaca skema, jadi "jav<TAB>ascript:" pun jalan.
-// Daftar skema yang lolos sengaja disamakan dengan `uriAman()` di backend.
+// Di luar materi. `rulesURI` dan `proofURI` ditulis SIAPA PUN ke kontrak, lalu materi
+// memasangnya apa adanya di atribut href.
+//
+// Koreksi atas dugaan awal saya: React 19 SUDAH memblokir `javascript:` sendiri.
+// `sanitizeURL` di react-dom-client menukar nilai href yang cocok dengan pola
+// `javascript:` (termasuk yang disisipi karakter kendali) menjadi URL yang melempar
+// error. Jadi lubang yang saya kira menganga itu tidak ada.
+//
+// Penyaring ini tetap dipakai, tapi alasannya yang jujur: React cuma memblokir SATU
+// skema, sedangkan yang lain (`data:`, `vbscript:`, `blob:`, dan apa pun yang muncul
+// nanti) diteruskan apa adanya, dan perilaku internal React bisa berubah kapan saja.
+// Daftar skema yang lolos sengaja disamakan dengan `uriAman()` di backend. Karakter
+// kendali dibuang lebih dulu karena browser mengabaikannya saat membaca skema.
 const KENDALI = new RegExp("[\\u0000-\\u001F\\u007F-\\u009F]", "g");
 
 export const tautanAman = (url?: string) => {
