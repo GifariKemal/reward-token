@@ -69,8 +69,12 @@ export function BountyCard({ bounty, account }: { bounty: Bounty; account?: Addr
           <span>Bounty #{bounty.bounty_id}</span>
           <span className="flex items-center gap-2">
             <span className="text-base">{rwd(bounty.reward_amount)}</span>
+            {/* hasOwn, bukan indeks langsung: label tak dikenal dari backend akan
+                mengambil anggota prototipe, dan sumber fungsinya ikut jadi kelas CSS */}
             <span
-              className={`rounded-full px-2 py-0.5 text-xs font-normal ${status ? warnaStatus[status] : "bg-muted"}`}
+              className={`rounded-full px-2 py-0.5 text-xs font-normal ${
+                status && Object.hasOwn(warnaStatus, status) ? warnaStatus[status] : "bg-muted"
+              }`}
             >
               {status ?? "…"}
             </span>

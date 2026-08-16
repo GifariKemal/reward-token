@@ -75,28 +75,35 @@ export function Punyaku({ account }: { account?: Address }) {
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           {submissions.length === 0 && <p className="text-muted-foreground py-4 text-center">Belum ada submission.</p>}
-          {submissions.map((s) => (
-            <div key={s.tx_hash} className="bg-muted space-y-1 rounded-lg px-3 py-2">
-              <div className="flex items-center justify-between">
-                <span className="font-medium">{labelStatus[s.status] ?? s.status}</span>
-                <span className="text-muted-foreground text-xs">{waktu(s.created_at)}</span>
+          {submissions.map((s) => {
+            // proof_uri ditulis worker ke kontrak, jadi skemanya disaring dulu
+            const bukti = tautanAman(s.proof_uri);
+            return (
+              <div key={s.tx_hash} className="bg-muted space-y-1 rounded-lg px-3 py-2">
+                <div className="flex items-center justify-between">
+                  {/* hasOwn, bukan `??`: `labelStatus["toString"]` mengembalikan FUNGSI
+                      dari prototipe, dan React melempar begitu diminta merendernya */}
+                  <span className="font-medium">
+                    {Object.hasOwn(labelStatus, s.status) ? labelStatus[s.status] : s.status}
+                  </span>
+                  <span className="text-muted-foreground text-xs">{waktu(s.created_at)}</span>
+                </div>
+                {bukti ? (
+                  <a
+                    className="text-primary block truncate text-xs hover:underline"
+                    href={bukti}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {s.proof_uri}
+                  </a>
+                ) : (
+                  <p className="text-muted-foreground truncate text-xs">{s.proof_uri}</p>
+                )}
+                {s.reward_amount && <p className="text-xs font-bold">Hadiah {rwd(s.reward_amount)}</p>}
               </div>
-              {/* proof_uri ditulis worker ke kontrak, jadi skemanya disaring dulu */}
-              {tautanAman(s.proof_uri) ? (
-                <a
-                  className="text-primary block truncate text-xs hover:underline"
-                  href={tautanAman(s.proof_uri)}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  {s.proof_uri}
-                </a>
-              ) : (
-                <p className="text-muted-foreground truncate text-xs">{s.proof_uri}</p>
-              )}
-              {s.reward_amount && <p className="text-xs font-bold">Hadiah {rwd(s.reward_amount)}</p>}
-            </div>
-          ))}
+            );
+          })}
         </CardContent>
       </Card>
     </div>

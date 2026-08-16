@@ -66,9 +66,17 @@ export const createBounty = async (account: Address, reward: string, rulesURI: s
 // Kirim bukti kerjaan ke satu bounty.
 //
 // Di luar materi: alamat escrow-nya datang dari backend, bukan dari kontrak, jadi
-// backend yang tersusupi bisa mengarahkan tanda tangan pengguna ke kontrak mana pun.
-// Registri factory yang otoritatif. Yang ditanya harus FACTORY, bukan escrow-nya
-// sendiri, sebab kontrak jahat bebas mengaku punya factory kita (pelajaran Sesi 6).
+// target tanda tangan diturunkan dari registri factory, bukan dari kiriman backend.
+// Yang ditanya harus FACTORY, bukan escrow-nya sendiri, sebab kontrak jahat bebas
+// mengaku punya factory kita (pelajaran Sesi 6).
+//
+// SEJAUH MANA ini menutup, supaya tidak diklaim berlebihan: yang dijamin hanyalah
+// target berupa escrow yang benar-benar DICETAK factory kita, jadi bytecode-nya milik
+// kita dan oracle-nya diambil dari `factory.oracle()`. Ini TIDAK menutup backend yang
+// tersusupi, sebab `bountyId` datang dari objek yang sama dengan alamatnya, dan
+// `createBounty` terbuka untuk siapa pun: penyerang tinggal membuat bounty sungguhan
+// lalu menyajikan pasangan id dan alamat miliknya sendiri. Penutupan sungguhan berarti
+// papan dibaca langsung dari `totalBounties()` plus `bounties(i)`, bukan dari backend.
 export const submitWork = async (escrow: Address, proofURI: string, bountyId: number) => {
   const terdaftar = await readContract(config, {
     address: CONTRACTS.bountyFactory,
@@ -81,7 +89,9 @@ export const submitWork = async (escrow: Address, proofURI: string, bountyId: nu
     throw new Error(`Alamat escrow tidak cocok dengan registri factory untuk bounty #${bountyId}.`);
 
   const hash = await writeContract(config, {
-    address: escrow,
+    // Yang dipakai hasil pembacaan chain, bukan `escrow` dari backend. Memeriksa satu
+    // nilai lalu memakai nilai lain adalah pola yang gampang bocor saat kode berubah.
+    address: terdaftar,
     abi: bountyEscrowAbi,
     functionName: "submitWork",
     args: [proofURI],
