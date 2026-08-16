@@ -20,8 +20,10 @@ const now = () => Math.floor(Date.now() / 1000);
 export const getFactoryLogs = (fromBlock: bigint, toBlock: bigint) =>
   withRetry(() => client.getLogs({ address: CONTRACTS.bountyFactory, event: bountyCreatedEvent, fromBlock, toBlock, strict: true }));
 
-// Satu request untuk banyak alamat + banyak event sekaligus
-export const getEscrowLogs = (address: Address[], fromBlock: bigint, toBlock: bigint) =>
+// Satu request untuk banyak alamat + banyak event sekaligus. `toBlock` boleh "latest"
+// supaya pemanggil yang tidak punya tinggi block sendiri tidak perlu menanyakannya ke
+// node lain lebih dulu, lihat alasannya di susulEscrow (indexer/watch.ts).
+export const getEscrowLogs = (address: Address[], fromBlock: bigint, toBlock: bigint | "latest") =>
   withRetry(() => client.getLogs({ address, events: escrowEvents, fromBlock, toBlock, strict: true }));
 
 export const handleBountyCreated = (log: Awaited<ReturnType<typeof getFactoryLogs>>[number]) => {

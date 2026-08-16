@@ -26,8 +26,18 @@ export const watch = () => {
 
   // Susulan sekali jalan untuk satu escrow, dari block kelahirannya sampai sekarang.
   // Insert idempoten, jadi tumpang tindih dengan watcher aman.
+  //
+  // `toBlock: "latest"`, BUKAN hasil `getBlockNumber()`, dan itu memperbaiki cacat yang
+  // terukur 17 Agustus 2026: susulan gagal dengan "JSON is not a valid request object".
+  // Sebabnya dua tinggi block yang dicampur dari NODE BERBEDA. `sejak` datang dari node
+  // yang menyampaikan log BountyCreated, sedangkan `getBlockNumber()` dilayani transport
+  // mana pun yang sedang dimenangkan `rank: true`. Begitu node kedua tertinggal beberapa
+  // block, toBlock jadi lebih kecil daripada fromBlock, dan thirdweb membalas -32600
+  // ("invalid block range params") yang oleh viem diterjemahkan jadi pesan menyesatkan di
+  // atas. Kata "latest" diterjemahkan MASING-MASING node dengan kepalanya sendiri, jadi
+  // tinggi block tidak pernah dicampur lagi, dan satu panggilan RPC ikut hilang.
   const susulEscrow = async (address: Address, sejak: bigint) => {
-    const log = await getEscrowLogs([address], sejak, await client.getBlockNumber());
+    const log = await getEscrowLogs([address], sejak, "latest");
     log.forEach(handleEscrowLog);
   };
 
