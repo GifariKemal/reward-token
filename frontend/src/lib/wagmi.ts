@@ -19,7 +19,9 @@ export const CHAIN = bscTestnet;
 //     Uji dari terminal saja tidak cukup untuk menilai RPC yang dipakai frontend.
 //   - publicnode dan bnbchain: dua-duanya lolos, dan itulah yang dipakai
 // publicnode memangkas block lama, dan itu tidak jadi soal di sini karena frontend
-// cuma membaca keadaan sekarang plus event yang baru.
+// cuma membaca keadaan sekarang plus event yang baru. publicnode sesekali membalas 403
+// kalau permintaannya rapat (empat watcher plus pembacaan per kartu), dan di situlah
+// fallback bekerja: viem pindah ke bnbchain, halaman tidak terganggu.
 const RPC_URLS = [
   import.meta.env.VITE_RPC_URL,
   "https://bsc-testnet-rpc.publicnode.com",

@@ -18,6 +18,8 @@ export type Status = (typeof statusLabel)[number];
 
 export const bountyFactoryAbi = parseAbi([
   "function totalBounties() view returns (uint256)",
+  // registri escrow milik factory, satu-satunya sumber yang tidak bisa dipalsukan
+  "function bounties(uint256) view returns (address)",
   "function oracle() view returns (address)",
   "function createBounty(uint256 rewardAmount, string rulesURI, uint256 submissionDeadline) returns (address)",
   "event BountyCreated(uint256 indexed bountyId, address indexed escrow, address indexed creator, uint256 rewardAmount)",

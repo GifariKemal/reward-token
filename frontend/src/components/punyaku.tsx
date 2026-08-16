@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { EXPLORER } from "@/lib/contracts";
-import { pendek, rwd, waktu } from "@/lib/format";
+import { pendek, rwd, tautanAman, waktu } from "@/lib/format";
 
 const labelStatus = {
   submitted: "Menunggu juri",
@@ -78,17 +78,22 @@ export function Punyaku({ account }: { account?: Address }) {
           {submissions.map((s) => (
             <div key={s.tx_hash} className="bg-muted space-y-1 rounded-lg px-3 py-2">
               <div className="flex items-center justify-between">
-                <span className="font-medium">{labelStatus[s.status]}</span>
+                <span className="font-medium">{labelStatus[s.status] ?? s.status}</span>
                 <span className="text-muted-foreground text-xs">{waktu(s.created_at)}</span>
               </div>
-              <a
-                className="text-primary block truncate text-xs hover:underline"
-                href={s.proof_uri}
-                rel="noreferrer"
-                target="_blank"
-              >
-                {s.proof_uri}
-              </a>
+              {/* proof_uri ditulis worker ke kontrak, jadi skemanya disaring dulu */}
+              {tautanAman(s.proof_uri) ? (
+                <a
+                  className="text-primary block truncate text-xs hover:underline"
+                  href={tautanAman(s.proof_uri)}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  {s.proof_uri}
+                </a>
+              ) : (
+                <p className="text-muted-foreground truncate text-xs">{s.proof_uri}</p>
+              )}
               {s.reward_amount && <p className="text-xs font-bold">Hadiah {rwd(s.reward_amount)}</p>}
             </div>
           ))}

@@ -63,8 +63,23 @@ export const createBounty = async (account: Address, reward: string, rulesURI: s
   return { hash, escrow: log?.args.escrow };
 };
 
-// Kirim bukti kerjaan ke satu bounty
-export const submitWork = async (escrow: Address, proofURI: string) => {
+// Kirim bukti kerjaan ke satu bounty.
+//
+// Di luar materi: alamat escrow-nya datang dari backend, bukan dari kontrak, jadi
+// backend yang tersusupi bisa mengarahkan tanda tangan pengguna ke kontrak mana pun.
+// Registri factory yang otoritatif. Yang ditanya harus FACTORY, bukan escrow-nya
+// sendiri, sebab kontrak jahat bebas mengaku punya factory kita (pelajaran Sesi 6).
+export const submitWork = async (escrow: Address, proofURI: string, bountyId: number) => {
+  const terdaftar = await readContract(config, {
+    address: CONTRACTS.bountyFactory,
+    abi: bountyFactoryAbi,
+    functionName: "bounties",
+    args: [BigInt(bountyId)],
+    ...CHAIN_ID,
+  });
+  if (terdaftar.toLowerCase() !== escrow.toLowerCase())
+    throw new Error(`Alamat escrow tidak cocok dengan registri factory untuk bounty #${bountyId}.`);
+
   const hash = await writeContract(config, {
     address: escrow,
     abi: bountyEscrowAbi,

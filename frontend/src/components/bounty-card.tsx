@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { pesanError, submitWork } from "@/lib/actions";
 import { api, type Bounty } from "@/lib/api";
 import { bountyEscrowAbi, EXPLORER, type Status } from "@/lib/contracts";
-import { pendek, rwd } from "@/lib/format";
+import { CHAIN } from "@/lib/wagmi";
+import { pendek, rwd, tautanAman } from "@/lib/format";
 import { useHitungMundur } from "@/hooks/use-hitung-mundur";
 
 const warnaStatus: Record<Status, string> = {
@@ -34,16 +35,20 @@ export function BountyCard({ bounty, account }: { bounty: Bounty; account?: Addr
     queryFn: () => api.verdicts(bounty.escrow),
   });
 
-  // Deadline tidak ada di API backend — baca langsung dari kontrak escrow
+  // Deadline tidak ada di API backend — baca langsung dari kontrak escrow.
+  // chainId eksplisit: tanpa itu wagmi membaca dari chain yang sedang aktif di wallet,
+  // dan kalau wallet-nya sedang di jaringan lain alamat ini kosong sehingga hitung
+  // mundur menghilang tanpa pesan salah apa pun.
   const { data: deadline } = useReadContract({
     address: bounty.escrow,
     abi: bountyEscrowAbi,
     functionName: "submissionDeadline",
+    chainId: CHAIN.id,
   });
   const mundur = useHitungMundur(deadline);
 
   const kirim = useMutation({
-    mutationFn: () => submitWork(bounty.escrow, proof.trim()),
+    mutationFn: () => submitWork(bounty.escrow, proof.trim(), bounty.bounty_id),
     onSuccess: () => {
       setProof("");
       // Status berubah di chain → papan dan detail bounty ini wajib diambil ulang
@@ -54,6 +59,8 @@ export function BountyCard({ bounty, account }: { bounty: Bounty; account?: Addr
 
   const status = detail?.status;
   const verdicts = verdictData?.verdicts ?? [];
+  // rulesURI ditulis siapa pun ke kontrak, jadi jangan langsung dipasang di href
+  const aturan = tautanAman(detail?.rulesURI);
 
   return (
     <Card>
@@ -89,15 +96,18 @@ export function BountyCard({ bounty, account }: { bounty: Bounty; account?: Addr
           )}
         </div>
 
-        {detail?.rulesURI && (
+        {aturan && (
           <a
             className="text-primary inline-flex items-center gap-1 break-all hover:underline"
-            href={detail.rulesURI}
+            href={aturan}
             rel="noreferrer"
             target="_blank"
           >
             Aturan bounty <ExternalLink className="h-3 w-3 shrink-0" />
           </a>
+        )}
+        {detail?.rulesURI && !aturan && (
+          <p className="text-muted-foreground break-all">Aturan bounty memakai tautan yang tidak aman, tidak dibuka.</p>
         )}
 
         {/* Alasan juri AI cuma ada di backend — chain simpan true/false doang */}
