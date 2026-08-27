@@ -7,7 +7,7 @@ import { getBoard, getLeaderboard, getPending, getVerdicts, insertVerdict } from
 import { relayerWallet } from "../lib/wallet";
 import { balanceOf, board, escrowSah, readEscrow } from "../services/bounty";
 import { createBounty, relayerAddress, submitWork } from "../services/relayer";
-import { uriAman } from "../services/judge";
+import { uriAman } from "../lib/ai";
 
 export const app = new Hono();
 

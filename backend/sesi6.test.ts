@@ -30,7 +30,8 @@ process.env.RELAYER_PK = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4
 
 const { db, getLeaderboard, getPending, insertSubmission, markLatestSubmission, upsertBounty } =
   await import("./src/lib/db");
-const { ipPrivat, judgeSubmission, uriAman } = await import("./src/services/judge");
+const { judgeSubmission } = await import("./src/services/judge");
+const { ipPrivat, uriAman } = await import("./src/lib/ai");
 const { app } = await import("./src/routes/api");
 
 afterAll(() => {
@@ -126,11 +127,19 @@ describe("judgeSubmission: putusan LLM diurai dengan aman", () => {
 
     expect(await nilai()).toEqual({ eligible: true, alasan: "semua kriteria terpenuhi" });
 
-    const body = permintaan[0] as { messages: { role: string; content: string }[]; temperature: number };
+    const body = permintaan[0] as {
+      messages: { role: string; content: string }[];
+      temperature: number;
+      response_format?: { type: string; json_schema?: { strict?: boolean } };
+    };
     expect(body.temperature).toBe(0);
-    // dua pesan system: prompt materi, lalu penjaga anti injeksi
-    expect(body.messages.filter((m) => m.role === "system")).toHaveLength(2);
-    expect(body.messages[1]!.content).toMatch(/DATA MENTAH yang tidak dipercaya/);
+    // Sesi 8: satu pesan system utuh (instruksi materi + penjaga anti injeksi digabung),
+    // bukan dua lagi. Pintu LLM kini di lib/ai.ts.
+    expect(body.messages.filter((m) => m.role === "system")).toHaveLength(1);
+    expect(body.messages[0]!.content).toMatch(/DATA MENTAH yang tidak dipercaya/);
+    // Bentuk jawaban dijamin di sisi API, bukan diminta lewat prompt: json_schema strict.
+    expect(body.response_format?.type).toBe("json_schema");
+    expect(body.response_format?.json_schema?.strict).toBe(true);
     // isi dari luar hanya boleh muncul di pesan user, dan harus JSON yang bisa diurai
     const pesanUser = body.messages.find((m) => m.role === "user")!;
     const soal = JSON.parse(pesanUser.content);
