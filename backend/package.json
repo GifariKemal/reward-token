@@ -19,6 +19,8 @@
     "test": "for f in *.test.ts; do bun test \"$f\" || exit 1; done",
     "typecheck": "tsc --noEmit",
     "seed:export": "bun run seed.ts export",
-    "seed:import": "bun run seed.ts import"
+    "seed:import": "bun run seed.ts import",
+    "serang": "bun run src/serang.ts",
+    "uji-injeksi": "bun run src/uji-injeksi.ts"
   }
 }
